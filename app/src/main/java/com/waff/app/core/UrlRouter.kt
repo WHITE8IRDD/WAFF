@@ -27,7 +27,8 @@ object UrlRouter {
             else -> Platform.GENERIC
         }
         if (platform == Platform.GENERIC) return PlatformLink.Unsupported
-        val canonical = URI("https", null, host, uri.port.takeUnless { it == 443 || it == 80 }, uri.path.ifBlank { "/" }, uri.query, null).toASCIIString()
+        val port = uri.port.let { if (it == 443 || it == 80) -1 else it }
+        val canonical = URI("https", null, host, port, uri.path.ifBlank { "/" }, uri.query, null).toASCIIString()
         return PlatformLink.Supported(canonical, platform)
     }
 }

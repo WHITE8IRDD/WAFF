@@ -100,7 +100,7 @@ class DirectDownloadRepository(context: Context) {
         fun long(column: String) = getColumnIndex(column).takeIf { it >= 0 }?.let(::getLong) ?: 0L
         val id = long(DownloadManager.COLUMN_ID)
         val name = preferences.getString(id.toString(), "Media download") ?: "Media download"
-        return TransferSnapshot(id, name, int(DownloadManager.COLUMN_STATUS), long(DownloadManager.COLUMN_BYTES_DOWNLOADED), long(DownloadManager.COLUMN_TOTAL_SIZE_BYTES), int(DownloadManager.COLUMN_REASON))
+        return TransferSnapshot(id, name, int(DownloadManager.COLUMN_STATUS), long(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR), long(DownloadManager.COLUMN_TOTAL_SIZE_BYTES), int(DownloadManager.COLUMN_REASON))
     }
 
     private fun filename(candidate: String, mime: String): String {
