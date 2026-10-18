@@ -19,7 +19,7 @@ class UrlRouterTest {
     }
 
     @Test fun rejectsMalformedAndNonWebLinks() {
-        listOf("", "not a url", "file:///tmp/a", "https:///missing-host").forEach {
+        listOf("", "not a url", "file:///tmp/a", "https:///missing-host", "https://user:pass@example.com/video.mp4").forEach {
             assertTrue("Expected invalid for $it", UrlRouter.parse(it) is PlatformLink.Invalid)
         }
     }

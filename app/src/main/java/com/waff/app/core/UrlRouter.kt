@@ -18,7 +18,7 @@ object UrlRouter {
         val uri = runCatching { URI(value) }.getOrNull() ?: return PlatformLink.Invalid
         val scheme = uri.scheme?.lowercase(Locale.ROOT)
         val host = uri.host?.lowercase(Locale.ROOT)?.removePrefix("www.")
-        if (scheme !in setOf("http", "https") || host.isNullOrBlank() || host.contains(' ')) return PlatformLink.Invalid
+        if (scheme !in setOf("http", "https") || host.isNullOrBlank() || host.contains(' ') || uri.userInfo != null) return PlatformLink.Invalid
         val platform = when {
             host == "youtube.com" || host == "m.youtube.com" || host == "youtu.be" || host == "youtube-nocookie.com" -> Platform.YOUTUBE
             host == "instagram.com" -> Platform.INSTAGRAM
