@@ -1,21 +1,23 @@
 # WAFF
 
-WAFF is an Android media-downloader project in its foundation stage. The long-term goal is a private, monochrome app for identifying eligible media, selecting real formats, and managing verified downloads. **This repository does not yet extract or download media.** The current app is an early Compose foundation, not a usable downloader or a stable release.
+WAFF is an Android media-downloader project in active development. The current app can download publicly reachable direct HTTPS image, audio, and video files through Android's DownloadManager after checking the response MIME type. **It does not extract media from platform pages (including YouTube, Instagram, TikTok, or Facebook).** This is an early milestone, not a stable release.
 
 [![Android CI](https://github.com/WHITE8IRDD/WAFF/actions/workflows/build.yml/badge.svg)](https://github.com/WHITE8IRDD/WAFF/actions/workflows/build.yml) · [GitHub Releases](https://github.com/WHITE8IRDD/WAFF/releases)
 
 ## Current status
 
-- [x] Android/Compose project skeleton (API 26 minimum, target/compile SDK 36)
-- [x] Monochrome app shell, four primary destinations, settings entry point
-- [x] Share-text intent registration and host-based supported-platform URL routing
-- [x] URL-router unit tests and initial CI workflow
-- [ ] Extraction, format selection, and actual downloads
-- [ ] Queue persistence, storage, history, and notifications
+- [x] Android/Compose app shell (API 26 minimum, target/compile SDK 36) and monochrome navigation
+- [x] Share-text intent handling and supported-platform URL recognition
+- [x] Direct HTTPS media-file preflight using HTTP response MIME type
+- [x] Real direct-file transfer via Android DownloadManager to `Downloads/WAFF`
+- [x] Live queue status/byte progress and completed-transfer list backed by DownloadManager
+- [x] Initial URL and direct-media MIME unit tests; CI workflow
+- [ ] Platform-page extraction and format selection
+- [ ] Room-backed queue/history, user-selected storage, retry/pause controls, and verified media opening
 - [ ] Browser media detection, platform-specific media picker, and engine updates
 - [ ] Device review, release APKs, ABI validation, and release automation
 
-The navigation destinations other than Home are deliberately honest early states; no download controls or simulated success are presented. URL recognition is not evidence that a platform can be extracted.
+Browser and Settings remain intentionally limited early states. URL recognition is not evidence that a platform can be extracted. The direct-file workflow requires a server that supports an HTTPS HEAD request and returns an image/audio/video MIME type; it rejects page URLs and ambiguous content rather than saving a preview or webpage as media. Transfers are managed by Android DownloadManager, so pause/resume behavior and notifications depend on Android and the device.
 
 ## Architecture
 
