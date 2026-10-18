@@ -21,14 +21,11 @@ jobs:
       - name: Install Android SDK packages
         shell: bash
         run: |
-          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
-          if [[ -z "$SDK_ROOT" || ! -d "$SDK_ROOT/cmdline-tools" ]]; then
-            echo "Android SDK command-line tools were not found on this runner." >&2
-            exit 1
-          fi
-          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager | sort -V | tail -n 1)"
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT" -type f -name sdkmanager 2>/dev/null | sort -V | tail -n 1)"
           if [[ -z "$SDKMANAGER" ]]; then
-            echo "sdkmanager is missing from $SDK_ROOT/cmdline-tools." >&2
+            echo "sdkmanager was not found under SDK root: $SDK_ROOT" >&2
+            echo "ANDROID_HOME=${ANDROID_HOME:-unset}; ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-unset}" >&2
             exit 1
           fi
           yes | "$SDKMANAGER" --licenses >/dev/null
