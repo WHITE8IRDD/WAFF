@@ -28,7 +28,7 @@ jobs:
             echo "ANDROID_HOME=${ANDROID_HOME:-unset}; ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-unset}" >&2
             exit 1
           fi
-          yes | "$SDKMANAGER" --licenses >/dev/null
+          printf 'y\n%.0s' {1..20} | "$SDKMANAGER" --licenses >/dev/null
           "$SDKMANAGER" --install 'platforms;android-36' 'build-tools;36.0.0'
       - uses: gradle/actions/setup-gradle@v4
         with:
