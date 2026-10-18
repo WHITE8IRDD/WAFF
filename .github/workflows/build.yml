@@ -34,7 +34,13 @@ jobs:
         with:
           gradle-version: '8.14.3'
       - name: Unit tests
-        run: gradle :app:testDebugUnitTest
+        shell: bash
+        run: |
+          set -o pipefail
+          if ! gradle :app:testDebugUnitTest --stacktrace --console=plain 2>&1 | tee /tmp/waff-test.log; then
+            grep -E '(^e: |error:|What went wrong:|Execution failed|FAILURE:|Could not|Unresolved reference|failed)' /tmp/waff-test.log | tail -n 40 | while IFS= read -r line; do echo "::error::$line"; done
+            exit 1
+          fi
       - name: Build debug and release APKs
         run: gradle :app:assembleDebug :app:assembleRelease
       - uses: actions/upload-artifact@v4
