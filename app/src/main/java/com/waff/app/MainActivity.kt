@@ -135,6 +135,19 @@ private fun HomeScreen(
     var mediaInfo by remember { mutableStateOf<ExtractedMediaInfo?>(null) }
     var selectedFormatId by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
+    val parsedLink = UrlRouter.parse(link)
+    val extractorUrl = when (parsedLink) {
+        is PlatformLink.Supported -> parsedLink.canonicalUrl
+        PlatformLink.Unsupported -> link.trim().let { raw ->
+            when {
+                raw.startsWith("www.", ignoreCase = true) -> "https://$raw"
+                raw.startsWith("http://", ignoreCase = true) -> "https://${raw.substringAfter("://")}"
+                else -> raw
+            }
+        }
+        PlatformLink.Invalid -> null
+    }
+    val canExtract = extractorUrl?.let(mediaExtractor::supportsUrl) == true
     Column(modifier.fillMaxSize().padding(horizontal = 24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         Spacer(Modifier.height(24.dp))
         Text("Save media.\nKeep it yours.", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Medium, lineHeight = 38.sp)
@@ -144,6 +157,9 @@ private fun HomeScreen(
             singleLine = true, shape = RoundedCornerShape(12.dp), keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
             keyboardActions = KeyboardActions(onGo = { focus.moveFocus(FocusDirection.Down) }),
             colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Paper, unfocusedBorderColor = Line, cursorColor = Paper, focusedTextColor = Paper, unfocusedTextColor = Paper))
+        if (parsedLink is PlatformLink.Supported && !canExtract) {
+            Text("${parsedLink.platform.label} page extraction is unavailable in this build. Paste a direct media URL instead.", color = Muted, style = MaterialTheme.typography.bodySmall)
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedButton(onClick = {
                 val clip = clipboard.getText()?.text
@@ -151,19 +167,6 @@ private fun HomeScreen(
             }, shape = RoundedCornerShape(10.dp)) {
                 Icon(Icons.Outlined.ContentPaste, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Paste")
             }
-            val parsedLink = UrlRouter.parse(link)
-            val extractorUrl = when (parsedLink) {
-                is PlatformLink.Supported -> parsedLink.canonicalUrl
-                PlatformLink.Unsupported -> link.trim().let { raw ->
-                    when {
-                        raw.startsWith("www.", ignoreCase = true) -> "https://$raw"
-                        raw.startsWith("http://", ignoreCase = true) -> "https://${raw.substringAfter("://")}"
-                        else -> raw
-                    }
-                }
-                PlatformLink.Invalid -> null
-            }
-            val canExtract = extractorUrl?.let(mediaExtractor::supportsUrl) == true
             Button(onClick = {
                 focus.clearFocus()
                 busy = true
