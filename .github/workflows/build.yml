@@ -72,7 +72,7 @@ jobs:
           retention-days: 14
 
   publish-preview-apks:
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'arena/b260b5f3-waff' && github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name == 'pull_request' && startsWith(github.event.pull_request.head.ref, 'arena/') && github.event.pull_request.head.repo.full_name == github.repository
     needs: verify
     runs-on: ubuntu-latest
     permissions:
@@ -90,7 +90,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          tag="v0.1.0-preview.5"
+          tag="v0.1.0-preview.6"
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "Preview release $tag already exists; leaving its assets unchanged."
             exit 0
@@ -107,4 +107,4 @@ jobs:
             --target "$TARGET_SHA" \
             --title "WAFF $tag — device-test preview" \
             --prerelease \
-            --notes "Test-only preview APKs for WAFF. This is not the WAFF 1.0 release and is not a finished or stable app. It includes the redesigned quality picker, Instagram carousel extraction, and WAFF Quick Download share target for physical-device evaluation. YouTube, Instagram posts/carousels, share-target behavior, and transfer reliability have not yet been verified on a physical phone; please report issues. The debug APK is signed with a temporary CI key for evaluation. The release APK is unsigned and requires signing before installation."
+            --notes "Test-only preview APKs for WAFF. This is not the WAFF 1.0 release and is not a finished or stable app. Instagram extraction/download is confirmed working on a physical phone (preview.5) and is preserved unchanged. This build hardens YouTube Quick Download (expedited background work, dataSync foreground type, visible failure notifications) and the download-completion notification path. Still to verify on a physical phone: YouTube Quick Download (return to YouTube, background download, completion notification, notification permission), Instagram Quick Download picker/preview, Instagram single image/video/carousel file types, history details/copy/Select all/Delete selected/Clear all (history removal must never delete files), and quality selection/UI responsiveness during background downloads. The debug APK is signed with a temporary CI key for evaluation. The release APK is unsigned and requires signing before installation."
