@@ -7,6 +7,7 @@ import androidx.work.Constraints
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.OutOfQuotaPolicy
 import androidx.work.WorkManager
 import androidx.work.workDataOf
 import com.waff.app.core.Platform
@@ -31,9 +32,12 @@ class QuickDownloadActivity : Activity() {
             return
         }
         if (parsed?.platform == Platform.YOUTUBE) {
+            // Expedited so the share starts extraction promptly even after returning to YouTube;
+            // falls back to a normal request when the expedited quota is exhausted.
             val request = OneTimeWorkRequestBuilder<QuickYouTubeDownloadWorker>()
                 .setInputData(workDataOf(QuickYouTubeDownloadWorker.KEY_URL to parsed.canonicalUrl))
                 .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+                .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                 .build()
             WorkManager.getInstance(applicationContext).enqueueUniqueWork(
                 "waff-quick-youtube-${parsed.canonicalUrl.hashCode()}", ExistingWorkPolicy.KEEP, request

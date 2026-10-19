@@ -23,9 +23,13 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+        <!-- ACTION_DOWNLOAD_COMPLETE is sent by DownloadProvider (a privileged app that does not run
+             under the system UID), and non-exported receivers can miss broadcasts from such sources.
+             The receiver stays defensive: it only posts notices for download IDs WAFF enqueued and
+             that DownloadManager confirms as successfully completed. -->
         <receiver
             android:name=".DownloadCompleteReceiver"
-            android:exported="false">
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.DOWNLOAD_COMPLETE" />
             </intent-filter>

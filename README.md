@@ -46,7 +46,7 @@ The generated outputs are under `app/build/outputs/apk/`. No wrapper is included
 
 ## Privacy and permissions
 
-The app requests Internet access and foreground data-sync service access for transfers. It does not request broad storage, notification, or account permissions. Android DownloadManager handles direct-file destinations; merged outputs are stored in app-specific external storage. WAFF does not read or export WebView cookies; Android WebView can retain first-party site data until cleared in Settings. The extractor does not promise access to private, login-gated, or DRM-protected media.
+The app requests Internet access, foreground data-sync service access for transfers, and notification permission for download-completion notices. It does not request broad storage or account permissions. Android DownloadManager handles direct-file destinations; merged outputs are stored in app-specific external storage. WAFF does not read or export WebView cookies; Android WebView can retain first-party site data until cleared in Settings. The extractor does not promise access to private, login-gated, or DRM-protected media.
 
 ## Licensing
 
