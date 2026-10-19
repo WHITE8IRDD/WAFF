@@ -222,7 +222,8 @@ private fun HomeScreen(
             setFeedback(if (info.formats.isEmpty()) "Instagram returned no downloadable media items." else null)
         } catch (error: Exception) {
             android.util.Log.e("WAFF", "Instagram extraction failed (${error.javaClass.simpleName})")
-            setFeedback("Instagram extraction failed (${error.javaClass.simpleName}). Check that the post is public and retry.")
+            val diagnostic = error.message.orEmpty().replace(Regex("https?://\\S+"), "[shared URL]").take(160)
+            setFeedback("Instagram extraction failed (${error.javaClass.simpleName})${diagnostic.takeIf { it.isNotBlank() }?.let { ": $it" }.orEmpty()}")
         } finally { busy = false; quickSelectionRequested = false }
     }
     Column(modifier.fillMaxSize().padding(horizontal = 24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {

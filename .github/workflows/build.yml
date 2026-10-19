@@ -90,7 +90,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          tag="v0.1.0-preview.4"
+          tag="v0.1.0-preview.5"
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "Preview release $tag already exists; leaving its assets unchanged."
             exit 0

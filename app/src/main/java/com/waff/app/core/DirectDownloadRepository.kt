@@ -109,11 +109,15 @@ class DirectDownloadRepository(context: Context) {
                 value.length <= 512 && '\r' !in value && '\n' !in value
         }
         val response = try {
-            inspectResolvedMime(url, safeHeaders).also { actual ->
-                if (!DirectMediaRules.isMediaMime(actual) || actual.substringBefore('/') != expectedMime.substringBefore('/')) {
-                    return@withContext EnqueueResult.Rejected("The source response does not match the selected media type; nothing was queued.")
-                }
+            val expected = DirectMediaRules.normalizedMime(expectedMime)
+            val actual = inspectResolvedMime(url, safeHeaders)
+            val knownBinary = actual in setOf("application/octet-stream", "binary/octet-stream", "application/mp4")
+            if (!DirectMediaRules.isMediaMime(expected) ||
+                (DirectMediaRules.isMediaMime(actual) && actual.substringBefore('/') != expected.substringBefore('/')) ||
+                (!DirectMediaRules.isMediaMime(actual) && !knownBinary)) {
+                return@withContext EnqueueResult.Rejected("The source response does not match the selected media type; nothing was queued.")
             }
+            expected
         } catch (error: Exception) {
             return@withContext EnqueueResult.Rejected(error.message ?: "Could not validate the selected media stream. Refresh the details and try again.")
         }
@@ -137,14 +141,17 @@ class DirectDownloadRepository(context: Context) {
         }
         var connection = probe("HEAD")
         var code = try { connection.responseCode } catch (error: Exception) { connection.disconnect(); throw error }
-        if (code !in 200..299) {
+        var mime = DirectMediaRules.normalizedMime(connection.contentType)
+        val genericBinary = setOf("application/octet-stream", "binary/octet-stream", "application/mp4")
+        if (code !in 200..299 || (!DirectMediaRules.isMediaMime(mime) && mime !in genericBinary)) {
             connection.disconnect()
             connection = probe("GET")
             code = try { connection.responseCode } catch (error: Exception) { connection.disconnect(); throw error }
+            mime = DirectMediaRules.normalizedMime(connection.contentType)
         }
         try {
             if (code !in 200..299) throw IllegalStateException("The selected stream is unavailable (HTTP $code). Refresh the media details and retry.")
-            return DirectMediaRules.normalizedMime(connection.contentType)
+            return mime
         } finally {
             runCatching { connection.inputStream.close() }
             connection.disconnect()

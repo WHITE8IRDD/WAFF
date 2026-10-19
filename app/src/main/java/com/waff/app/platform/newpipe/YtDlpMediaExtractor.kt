@@ -49,6 +49,7 @@ internal class YtDlpMediaExtractor(context: Context) {
                 initialized.set(true)
             }
         }
+        updateInstagramExtractor()
         val request = YoutubeDLRequest(url).apply {
             addOption("--dump-json")
             addOption("--no-warnings")
@@ -157,6 +158,19 @@ internal class YtDlpMediaExtractor(context: Context) {
         )
     }
 
+    private suspend fun updateInstagramExtractor() = updateMutex.withLock {
+        if (instagramUpdateAttempted.get()) return@withLock
+        instagramUpdateAttempted.set(true)
+        val previous = runCatching { YoutubeDL.versionName(appContext) }.getOrNull()
+        try {
+            val status = YoutubeDL.updateYoutubeDL(appContext)
+            val current = runCatching { YoutubeDL.versionName(appContext) }.getOrNull()
+            android.util.Log.i("WAFF", "Instagram yt-dlp update: ${status ?: "no status"}; version=${current ?: previous ?: "unknown"}")
+        } catch (error: Exception) {
+            android.util.Log.w("WAFF", "Instagram yt-dlp update failed (${error.javaClass.simpleName}); using bundled extractor")
+        }
+    }
+
     private fun VideoFormat.toExtractedFormat(): ExtractedFormat? {
         val streamUrl = url?.takeIf { it.startsWith("https://", ignoreCase = true) } ?: return null
         val video = !vcodec.isNullOrBlank() && vcodec != "none"
@@ -203,6 +217,8 @@ internal class YtDlpMediaExtractor(context: Context) {
 
     companion object {
         private val initialized = AtomicBoolean(false)
+        private val instagramUpdateAttempted = AtomicBoolean(false)
         private val initMutex = Mutex()
+        private val updateMutex = Mutex()
     }
 }
