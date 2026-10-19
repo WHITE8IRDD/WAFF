@@ -33,7 +33,8 @@ data class TransferSnapshot(
     val bytesDownloaded: Long,
     val totalBytes: Long,
     val reason: Int,
-    val localPath: String? = null
+    val localPath: String? = null,
+    val downloadUri: String? = null
 ) {
     val progressPercent: Int? get() = if (totalBytes > 0) ((bytesDownloaded * 100) / totalBytes).toInt().coerceIn(0, 100) else null
 }
@@ -204,7 +205,8 @@ class DirectDownloadRepository(context: Context) {
             requestHeaders.forEach { (name, value) -> request.addRequestHeader(name, value) }
             val downloadId = manager.enqueue(request)
             id = downloadId
-            dao.insert(DownloadRecord(downloadId, filename, mime, System.currentTimeMillis()))
+            dao.insert(DownloadRecord(downloadId, filename, mime, System.currentTimeMillis(),
+                sourceUrl = url, status = DownloadManager.STATUS_PENDING, bytesDownloaded = 0L, totalBytes = -1L, reason = 0))
             EnqueueResult.Added(downloadId, filename, mime)
         } catch (_: Exception) {
             id?.let { manager.remove(it) }
@@ -216,21 +218,42 @@ class DirectDownloadRepository(context: Context) {
         val records = dao.getAll()
         val managed = managedDao.getAll()
         val byId = records.associateBy(DownloadRecord::id)
+        val queriedIds = HashSet<Long>()
         val found = records.chunked(500).flatMap { batch ->
             val cursor = runCatching { manager.query(DownloadManager.Query().setFilterById(*batch.map(DownloadRecord::id).toLongArray())) }.getOrNull()
                 ?: return@flatMap emptyList()
+            queriedIds.addAll(batch.map(DownloadRecord::id))
             cursor.use { c -> buildList { while (c.moveToNext()) {
                 val id = c.getLong(c.getColumnIndexOrThrow(DownloadManager.COLUMN_ID))
                 byId[id]?.let { add(c.snapshot(it)) }
             } } }
         }
+        found.forEach { snapshot ->
+            dao.updateState(snapshot.id, snapshot.status, snapshot.bytesDownloaded, snapshot.totalBytes,
+                snapshot.reason, snapshot.downloadUri)
+        }
         val activeIds = found.mapTo(HashSet(), TransferSnapshot::id)
-        records.filterNot { it.id in activeIds }.forEach { dao.delete(it.id) }
+        val retained = records.filterNot { it.id in activeIds }.map { record ->
+            val queryConfirmedMissing = record.id in queriedIds
+            val previousStatus = record.status
+            val status = if (queryConfirmedMissing && previousStatus !in setOf(DownloadManager.STATUS_SUCCESSFUL, DownloadManager.STATUS_FAILED)) {
+                DownloadManager.STATUS_FAILED
+            } else previousStatus ?: DownloadManager.STATUS_PENDING
+            val reason = if (status == DownloadManager.STATUS_FAILED && previousStatus != DownloadManager.STATUS_FAILED) {
+                DownloadManager.ERROR_UNKNOWN
+            } else record.reason ?: 0
+            val downloaded = record.bytesDownloaded ?: 0L
+            val total = record.totalBytes ?: -1L
+            if (queryConfirmedMissing) dao.updateState(record.id, status, downloaded, total, reason, record.localUri)
+            TransferSnapshot(record.id, record.filename, record.mimeType, status, downloaded, total, reason,
+                downloadUri = record.localUri)
+        }
         val managedSnapshots = managed.map { record ->
             TransferSnapshot(record.id, record.filename, record.mimeType, record.status,
                 record.bytesDownloaded, record.totalBytes, record.reason, record.localPath)
         }
-        (found + managedSnapshots).sortedByDescending { snapshot ->
+        val directSnapshots = found + retained
+        (directSnapshots + managedSnapshots).sortedByDescending { snapshot ->
             byId[snapshot.id]?.createdAtMillis ?: managed.firstOrNull { it.id == snapshot.id }?.createdAtMillis ?: 0L
         }
     }
@@ -262,7 +285,13 @@ class DirectDownloadRepository(context: Context) {
             File(managed.localPath).delete()
             managedDao.delete(id)
         } else {
+            val record = dao.getById(id)
             manager.remove(id)
+            record?.localUri?.let { stored -> runCatching {
+                val uri = Uri.parse(stored)
+                if (uri.scheme == "content") app.contentResolver.delete(uri, null, null)
+                else if (uri.scheme == "file") uri.path?.let(::File)?.delete()
+            } }
             dao.delete(id)
         }
     }
@@ -277,8 +306,9 @@ class DirectDownloadRepository(context: Context) {
                 is EnqueueResult.Rejected -> result
             }
         }
-        val source = originalUrl(id)
-            ?: return EnqueueResult.Rejected("The original link is no longer available in Android Downloads.")
+        val savedSource = withContext(Dispatchers.IO) { dao.getById(id)?.sourceUrl?.takeIf(String::isNotBlank) }
+        val source = savedSource ?: originalUrl(id)
+            ?: return EnqueueResult.Rejected("The original link is no longer available in WAFF history.")
         return when (val result = enqueue(source)) {
             is EnqueueResult.Added -> { cancel(id); result }
             is EnqueueResult.Rejected -> result
@@ -289,7 +319,9 @@ class DirectDownloadRepository(context: Context) {
         val uri = transfer.localPath?.let { path ->
             val file = File(path)
             if (file.isFile) runCatching { FileProvider.getUriForFile(context, "${app.packageName}.provider", file) }.getOrNull() else null
-        } ?: manager.getUriForDownloadedFile(transfer.id) ?: return false
+        } ?: manager.getUriForDownloadedFile(transfer.id)
+            ?: transfer.downloadUri?.let { runCatching { Uri.parse(it) }.getOrNull() }
+            ?: return false
         return runCatching {
             context.startActivity(Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(uri, transfer.mimeType)
@@ -302,7 +334,9 @@ class DirectDownloadRepository(context: Context) {
         val uri = transfer.localPath?.let { path ->
             val file = File(path)
             if (file.isFile) runCatching { FileProvider.getUriForFile(context, "${app.packageName}.provider", file) }.getOrNull() else null
-        } ?: manager.getUriForDownloadedFile(transfer.id) ?: return false
+        } ?: manager.getUriForDownloadedFile(transfer.id)
+            ?: transfer.downloadUri?.let { runCatching { Uri.parse(it) }.getOrNull() }
+            ?: return false
         return runCatching {
             val send = Intent(Intent.ACTION_SEND).apply {
                 type = transfer.mimeType
@@ -327,8 +361,10 @@ class DirectDownloadRepository(context: Context) {
     private fun Cursor.snapshot(record: DownloadRecord): TransferSnapshot {
         fun int(column: String) = getColumnIndex(column).takeIf { it >= 0 }?.let(::getInt) ?: 0
         fun long(column: String) = getColumnIndex(column).takeIf { it >= 0 }?.let(::getLong) ?: 0L
+        val localUri = getColumnIndex(DownloadManager.COLUMN_LOCAL_URI).takeIf { it >= 0 }?.let(::getString)
         return TransferSnapshot(record.id, record.filename, record.mimeType, int(DownloadManager.COLUMN_STATUS),
-            long(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR), long(DownloadManager.COLUMN_TOTAL_SIZE_BYTES), int(DownloadManager.COLUMN_REASON))
+            long(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR), long(DownloadManager.COLUMN_TOTAL_SIZE_BYTES),
+            int(DownloadManager.COLUMN_REASON), downloadUri = localUri)
     }
 
 }

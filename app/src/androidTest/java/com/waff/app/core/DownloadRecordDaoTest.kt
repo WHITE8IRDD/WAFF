@@ -32,6 +32,17 @@ class DownloadRecordDaoTest {
         assertEquals(emptyList<DownloadRecord>(), dao.getAll())
     }
 
+    @Test fun directTransferHistoryCachesSourceAndSystemStatus() = runBlocking {
+        val record = DownloadRecord(8L, "saved.mp4", "video/mp4", 5678L,
+            sourceUrl = "https://example.test/saved.mp4", status = android.app.DownloadManager.STATUS_SUCCESSFUL,
+            bytesDownloaded = 2048L, totalBytes = 2048L, reason = 0, localUri = "content://downloads/8")
+        dao.insert(record)
+        assertEquals(record, dao.getById(record.id))
+        dao.updateState(record.id, android.app.DownloadManager.STATUS_FAILED, 1024L, 2048L, android.app.DownloadManager.ERROR_UNKNOWN, record.localUri)
+        assertEquals(android.app.DownloadManager.STATUS_FAILED, dao.getById(record.id)?.status)
+        assertEquals(record.sourceUrl, dao.getById(record.id)?.sourceUrl)
+    }
+
     @Test fun managedTransfersPersistProgressAndCanBeRemoved() = runBlocking {
         val managed = database.managedTransferDao()
         val record = ManagedTransferRecord(-1L, "merged.mkv", "video/x-matroska", "https://example.test/v",

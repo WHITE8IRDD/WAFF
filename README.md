@@ -19,8 +19,8 @@ WAFF is an Android media-downloader project in active development. The app can d
 - [x] Save extracted subtitle tracks and thumbnails as separate files (compiled in CI; runtime verification pending)
 - [x] yt-dlp fallback wired for Instagram, TikTok, and Facebook public pages (build/runtime verification pending)
 - [x] Separate audio/video selection, persistent foreground merge queue, and MKV mux implementation (runtime/device verification pending)
-- [x] Room-persisted transfer metadata joined to DownloadManager status and completed-file actions
-- [x] Room 1→2 data migration and pause/resume controls for managed merge jobs (runtime testing pending)
+- [x] Persistent transfer history/source metadata with cached DownloadManager state and completed-file actions
+- [x] Room 1→2→3 migrations and pause/resume controls for managed merge jobs (emulator runtime pending)
 - [ ] User-selected storage, DownloadManager pause/resume controls, and verified post-transfer content checks
 - [x] Embedded WebView browsing with DownloadListener-based direct-file offers
 - [ ] General page-resource inspection, platform-specific media picker, and engine updates
