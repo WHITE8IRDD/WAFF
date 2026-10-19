@@ -40,6 +40,7 @@ internal fun BrowserScreen(
     var address by remember { mutableStateOf("https://") }
     var webView by remember { mutableStateOf<WebView?>(null) }
     var canGoBack by remember { mutableStateOf(false) }
+    var hasVisitedPage by remember { mutableStateOf(false) }
     var candidate by remember { mutableStateOf<String?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
@@ -75,6 +76,7 @@ internal fun BrowserScreen(
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
                 keyboardActions = KeyboardActions(onGo = {
                     focus.clearFocus()
+                    hasVisitedPage = true
                     webView?.loadUrl(normalizeAddress(address))
                 }),
                 colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Paper, unfocusedBorderColor = Line, cursorColor = Paper, focusedTextColor = Paper, unfocusedTextColor = Paper)
@@ -83,12 +85,14 @@ internal fun BrowserScreen(
                 focus.clearFocus()
                 val url = normalizeAddress(address)
                 address = url
+                hasVisitedPage = true
                 webView?.loadUrl(url)
             }, enabled = address.isNotBlank()) { Icon(Icons.Outlined.ArrowForward, contentDescription = "Go to address") }
         }
 
+        Box(Modifier.weight(1f).fillMaxWidth()) {
         AndroidView(
-            modifier = Modifier.weight(1f).fillMaxWidth(),
+            modifier = Modifier.fillMaxSize(),
             factory = { viewContext ->
                 WebView(viewContext).apply {
                     settings.javaScriptEnabled = true
@@ -126,6 +130,12 @@ internal fun BrowserScreen(
             },
             update = { view -> if (webView !== view) webView = view }
         )
+        if (!hasVisitedPage) Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("Browse the web", style = MaterialTheme.typography.titleMedium, color = Paper)
+            Spacer(Modifier.height(8.dp))
+            Text("Direct media download offers appear here when a page exposes them.", style = MaterialTheme.typography.bodySmall, color = Muted)
+        }
+        }
 
         candidate?.let { url ->
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
