@@ -52,10 +52,10 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private val Ink = androidx.compose.ui.graphics.Color(0xFF000000)
-private val Paper = androidx.compose.ui.graphics.Color(0xFFFFFFFF)
-private val Muted = androidx.compose.ui.graphics.Color(0xFF9E9E9E)
-private val Line = androidx.compose.ui.graphics.Color(0xFF2A2A2A)
+internal val Ink = androidx.compose.ui.graphics.Color(0xFF000000)
+internal val Paper = androidx.compose.ui.graphics.Color(0xFFFFFFFF)
+internal val Muted = androidx.compose.ui.graphics.Color(0xFF9E9E9E)
+internal val Line = androidx.compose.ui.graphics.Color(0xFF2A2A2A)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
