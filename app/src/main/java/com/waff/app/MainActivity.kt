@@ -216,9 +216,13 @@ private fun HomeScreen(
             }
         }
         mediaInfo?.let { info ->
+            val mergeIdsAreSafe = listOfNotNull(selectedVideoFormatId, selectedAudioFormatId)
+                .let { it.size == 2 && it.all { id -> Regex("^[A-Za-z0-9._-]{1,64}$").matches(id) } }
+            val mergeSupported = info.supportsYtDlpMerge && mergeIdsAreSafe
             ExtractedFormatsPanel(info, selectedFormatId, { selectedFormatId = it },
                 selectedVideoFormatId, { selectedVideoFormatId = it },
                 selectedAudioFormatId, { selectedAudioFormatId = it },
+                mergeSupported = mergeSupported,
                 onMerge = {
                     val videoId = selectedVideoFormatId
                     val audioId = selectedAudioFormatId

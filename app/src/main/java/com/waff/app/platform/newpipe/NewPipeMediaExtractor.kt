@@ -50,7 +50,8 @@ internal data class ExtractedMediaInfo(
     val durationSeconds: Long,
     val thumbnailUrl: String?,
     val formats: List<ExtractedFormat>,
-    val subtitles: List<ExtractedSubtitle>
+    val subtitles: List<ExtractedSubtitle>,
+    val supportsYtDlpMerge: Boolean = false
 )
 
 /** NewPipe Extractor adapter. It exposes upstream evidence without inventing formats or sizes. */

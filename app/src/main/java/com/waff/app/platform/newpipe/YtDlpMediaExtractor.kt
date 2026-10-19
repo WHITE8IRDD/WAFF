@@ -32,7 +32,8 @@ internal class YtDlpMediaExtractor(context: Context) {
             thumbnailUrl = info.thumbnail,
             formats = info.formats.orEmpty().mapNotNull { it.toExtractedFormat() }
                 .distinctBy { it.id },
-            subtitles = emptyList()
+            subtitles = emptyList(),
+            supportsYtDlpMerge = true
         )
     }
 

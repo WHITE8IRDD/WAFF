@@ -26,6 +26,7 @@ internal fun ExtractedFormatsPanel(
     onSelectVideo: (String) -> Unit,
     selectedAudioId: String?,
     onSelectAudio: (String) -> Unit,
+    mergeSupported: Boolean,
     onMerge: () -> Unit,
     onSaveSubtitle: (ExtractedSubtitle) -> Unit,
     onSaveThumbnail: () -> Unit
@@ -51,7 +52,11 @@ internal fun ExtractedFormatsPanel(
         }
         val hasSeparatePair = info.formats.any { it.kind == ExtractedFormatKind.VIDEO_ONLY } && info.formats.any { it.kind == ExtractedFormatKind.AUDIO }
         if (hasSeparatePair) {
-            Text("Choose separate tracks to mux into one MKV file.", color = Muted, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 6.dp))
+            Text(
+                if (mergeSupported) "Choose separate tracks to mux into one MKV file."
+                else "This extractor’s format IDs cannot be safely passed to the merge engine. Choose a combined stream.",
+                color = Muted, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 6.dp)
+            )
         }
         listOf(
             ExtractedFormatKind.VIDEO_WITH_AUDIO to "Video with audio",
@@ -76,7 +81,7 @@ internal fun ExtractedFormatsPanel(
                 }
             }
         }
-        if (hasSeparatePair) {
+        if (hasSeparatePair && mergeSupported) {
             androidx.compose.material3.Button(onClick = onMerge, enabled = selectedVideoId != null && selectedAudioId != null,
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp), colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = Paper, contentColor = androidx.compose.ui.graphics.Color.Black)) {
                 Text("Merge selected tracks")
