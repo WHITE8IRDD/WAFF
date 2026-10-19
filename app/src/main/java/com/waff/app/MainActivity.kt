@@ -5,12 +5,6 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.ui.viewinterop.AndroidView
-import android.webkit.WebView
-import android.webkit.WebViewClient
-import android.webkit.WebChromeClient
-import android.webkit.WebResourceRequest
-import android.webkit.CookieManager
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -272,113 +266,6 @@ private fun HomeScreen(
             Text("No WAFF account required. Links go directly to their source.", color = Muted, style = MaterialTheme.typography.labelMedium)
         }
         Spacer(Modifier.height(18.dp))
-    }
-}
-
-@Composable
-private fun BrowserScreen(repository: DirectDownloadRepository, onQueued: () -> Unit, modifier: Modifier = Modifier) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var address by remember { mutableStateOf("https://www.google.com") }
-    var feedback by remember { mutableStateOf<String?>(null) }
-    var pageProgress by remember { mutableIntStateOf(0) }
-    var browser by remember { mutableStateOf<WebView?>(null) }
-
-    fun navigate() {
-        val input = address.trim()
-        val destination = when {
-            input.startsWith("https://", ignoreCase = true) -> input
-            input.startsWith("http://", ignoreCase = true) -> "https://${input.substringAfter("://")}"
-            input.contains(' ') || !input.contains('.') -> "https://www.google.com/search?q=${android.net.Uri.encode(input)}"
-            else -> "https://$input"
-        }
-        val uri = runCatching { android.net.Uri.parse(destination) }.getOrNull()
-        if (uri?.scheme != "https" || uri.host.isNullOrBlank() || uri.userInfo != null) {
-            feedback = "Enter a valid HTTPS address."
-            return
-        }
-        address = destination
-        feedback = null
-        browser?.loadUrl(destination)
-    }
-
-    Column(modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            IconButton(onClick = { if (browser?.canGoBack() == true) browser?.goBack() }, enabled = browser?.canGoBack() == true) {
-                Icon(Icons.Outlined.ArrowBack, contentDescription = "Back")
-            }
-            IconButton(onClick = { browser?.reload() }, enabled = browser != null) {
-                Icon(Icons.Outlined.Refresh, contentDescription = "Reload page")
-            }
-            OutlinedTextField(value = address, onValueChange = { address = it }, modifier = Modifier.weight(1f),
-                singleLine = true, placeholder = { Text("HTTPS address or search") },
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
-                keyboardActions = KeyboardActions(onGo = { navigate() }),
-                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Paper, unfocusedBorderColor = Line,
-                    cursorColor = Paper, focusedTextColor = Paper, unfocusedTextColor = Paper))
-            IconButton(onClick = { navigate() }) { Icon(Icons.Outlined.ArrowForward, contentDescription = "Go") }
-        }
-        if (pageProgress in 1..99) LinearProgressIndicator(progress = { pageProgress / 100f }, modifier = Modifier.fillMaxWidth(), color = Paper, trackColor = Line)
-        if (feedback != null) Text(feedback.orEmpty(), color = Muted, style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp))
-        AndroidView(
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-            factory = { viewContext ->
-                WebView(viewContext).apply {
-                    settings.javaScriptEnabled = true
-                    settings.domStorageEnabled = true
-                    settings.allowFileAccess = false
-                    settings.allowContentAccess = false
-                    settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
-                    CookieManager.getInstance().setAcceptThirdPartyCookies(this, false)
-                    webViewClient = object : WebViewClient() {
-                        override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                            val target = request.url
-                            if (target.scheme != "https" || target.host.isNullOrBlank() || target.userInfo != null) {
-                                feedback = "Only secure HTTPS pages can be opened in WAFF Browser."
-                                return true
-                            }
-                            return false
-                        }
-                        override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
-                            super.onPageStarted(view, url, favicon)
-                            if (!url.isNullOrBlank()) address = url
-                        }
-                    }
-                    webChromeClient = object : WebChromeClient() {
-                        override fun onProgressChanged(view: WebView, newProgress: Int) { pageProgress = newProgress }
-                    }
-                    setDownloadListener { url, userAgent, _, mimeType, _ ->
-                        if (!com.waff.app.core.DirectMediaRules.isMediaMime(mimeType)) {
-                            feedback = "This page offered a non-media download; WAFF only queues image, audio, and video files."
-                        } else {
-                            val referer = browser?.url ?: url
-                            val name = android.webkit.URLUtil.guessFileName(url, null, mimeType)
-                            val headers = buildMap {
-                                if (!userAgent.isNullOrBlank()) put("User-Agent", userAgent)
-                                if (referer.startsWith("https://", ignoreCase = true)) put("Referer", referer)
-                            }
-                            scope.launch {
-                                when (val result = repository.enqueueResolvedMedia(url, name, mimeType, headers)) {
-                                    is EnqueueResult.Added -> { feedback = "Download started · ${result.filename}"; onQueued() }
-                                    is EnqueueResult.Rejected -> feedback = result.reason
-                                }
-                            }
-                        }
-                    }
-                    browser = this
-                    loadUrl("https://www.google.com")
-                }
-            },
-            update = { browser = it }
-        )
-    }
-    DisposableEffect(Unit) {
-        onDispose {
-            browser?.stopLoading()
-            browser?.destroy()
-        }
     }
 }
 
