@@ -42,6 +42,9 @@ internal fun BrowserScreen(
     var canGoBack by remember { mutableStateOf(false) }
     var hasVisitedPage by remember { mutableStateOf(false) }
     var candidate by remember { mutableStateOf<String?>(null) }
+    var candidateMime by remember { mutableStateOf("") }
+    var candidateTitle by remember { mutableStateOf("") }
+    var candidateHeaders by remember { mutableStateOf(emptyMap<String, String>()) }
     var message by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
 
@@ -56,7 +59,7 @@ internal fun BrowserScreen(
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
-    DisposableEffect(webView) {
+    DisposableEffect(Unit) {
         onDispose { webView?.stopLoading(); webView?.destroy() }
     }
 
@@ -101,14 +104,22 @@ internal fun BrowserScreen(
                     settings.allowContentAccess = false
                     settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
                     settings.safeBrowsingEnabled = true
+                    android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(this, false)
                     webViewClient = object : WebViewClient() {
                         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                            return request.url.scheme !in setOf("https", "http")
+                            val target = request.url
+                            if (target.userInfo != null || target.host.isNullOrBlank()) return true
+                            if (target.scheme.equals("http", ignoreCase = true)) {
+                                view.loadUrl(target.buildUpon().scheme("https").build().toString())
+                                return true
+                            }
+                            return !target.scheme.equals("https", ignoreCase = true)
                         }
 
                         override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
                             address = url
                             candidate = null
+                            candidateHeaders = emptyMap()
                             message = null
                         }
 
@@ -116,13 +127,20 @@ internal fun BrowserScreen(
                             canGoBack = view.canGoBack()
                         }
                     }
-                    setDownloadListener { url, _, _, mimeType, _ ->
-                        if (DirectMediaRules.isMediaMime(mimeType)) {
+                    setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
+                        if (DirectMediaRules.isMediaMime(mimeType) && url.startsWith("https://", ignoreCase = true)) {
                             candidate = url
-                            message = "A direct ${DirectMediaRules.normalizedMime(mimeType)} file is available."
+                            candidateMime = DirectMediaRules.normalizedMime(mimeType)
+                            candidateTitle = android.webkit.URLUtil.guessFileName(url, contentDisposition, candidateMime)
+                            val referer = this.url.orEmpty()
+                            candidateHeaders = buildMap {
+                                if (!userAgent.isNullOrBlank()) put("User-Agent", userAgent)
+                                if (referer.startsWith("https://", ignoreCase = true)) put("Referer", referer)
+                            }
+                            message = "A direct ${candidateMime} file is available."
                         } else {
                             candidate = null
-                            message = "This download is not a supported image, audio, or video file."
+                            message = "Only direct HTTPS image, audio, or video downloads can be queued."
                         }
                     }
                     webView = this
@@ -146,7 +164,7 @@ internal fun BrowserScreen(
                 Button(onClick = {
                     busy = true
                     scope.launch {
-                        when (val result = repository.enqueue(url)) {
+                        when (val result = repository.enqueueResolvedMedia(url, candidateTitle, candidateMime, candidateHeaders)) {
                             is EnqueueResult.Added -> { candidate = null; message = "Download started · ${result.filename}"; onQueued() }
                             is EnqueueResult.Rejected -> message = result.reason
                         }
@@ -166,6 +184,15 @@ internal fun BrowserScreen(
 
 private fun normalizeAddress(input: String): String {
     val trimmed = input.trim()
-    if (trimmed.startsWith("https://") || trimmed.startsWith("http://")) return trimmed
-    return "https://$trimmed"
+    if (trimmed.isBlank()) return "https://duckduckgo.com/"
+    if (trimmed.contains(' ') || (!trimmed.contains('.') && !trimmed.startsWith("https://", true) && !trimmed.startsWith("http://", true))) {
+        return "https://duckduckgo.com/?q=${android.net.Uri.encode(trimmed)}"
+    }
+    val secure = when {
+        trimmed.startsWith("https://", ignoreCase = true) -> trimmed
+        trimmed.startsWith("http://", ignoreCase = true) -> "https://${trimmed.substringAfter("://")}"
+        else -> "https://$trimmed"
+    }
+    val uri = runCatching { android.net.Uri.parse(secure) }.getOrNull()
+    return if (uri?.host.isNullOrBlank() || uri?.userInfo != null) "https://duckduckgo.com/?q=${android.net.Uri.encode(trimmed)}" else secure
 }

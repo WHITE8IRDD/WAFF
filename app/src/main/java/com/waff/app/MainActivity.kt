@@ -424,6 +424,11 @@ private fun SettingsScreen(modifier: Modifier = Modifier) {
                 runCatching {
                     android.webkit.WebStorage.getInstance().deleteAllData()
                     android.webkit.CookieManager.getInstance().removeAllCookies { }
+                    android.webkit.WebViewDatabase.getInstance(context).apply {
+                        clearFormData()
+                        clearHttpAuthUsernamePassword()
+                        clearUsernamePassword()
+                    }
                     android.webkit.WebView(context).apply {
                         clearCache(true)
                         clearHistory()

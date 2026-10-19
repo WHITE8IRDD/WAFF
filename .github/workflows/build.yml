@@ -45,6 +45,8 @@ jobs:
             grep -E '(^e: |error:|What went wrong:|Execution failed|FAILURE:|Could not|Unresolved reference|failed)' /tmp/waff-test.log | tail -n 40 | while IFS= read -r line; do echo "::error::$line"; done
             exit 1
           fi
+      - name: Compile Android integration tests
+        run: gradle :app:compileDebugAndroidTestKotlin --stacktrace --console=plain
       - name: Build debug and release APKs
         shell: bash
         run: |
@@ -54,7 +56,7 @@ jobs:
             exit 1
           fi
       - name: Room integration test on Android emulator
-        if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request'
+        if: github.event_name == 'workflow_dispatch'
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35

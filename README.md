@@ -14,11 +14,11 @@ WAFF is an Android media-downloader project in active development. The app can d
 - [x] History search, open/share actions, and confirmed removal of completed downloads
 - [x] URL, hostname, MIME, filename-safety, and filter-preserving media-selection unit tests
 - [x] Room transfer metadata implementation
-- [x] Room DAO emulator integration test wired into pull-request CI (latest emulator run pending)
+- [x] Room integration-test sources compiled in CI; emulator execution is manual-only and remains unverified
 - [x] NewPipe-recognized service metadata and format-selection UI (compiled in CI; live-service/device verification pending)
 - [x] Save extracted subtitle tracks and thumbnails as separate files (compiled in CI; runtime verification pending)
 - [x] yt-dlp fallback wired for Instagram, TikTok, and Facebook public pages (build/runtime verification pending)
-- [ ] Separate audio/video stream merging and full regression matrix
+- [x] Separate audio/video selection, persistent foreground merge queue, and MKV mux implementation (runtime/device verification pending)
 - [x] Room-persisted transfer metadata joined to DownloadManager status and completed-file actions
 - [ ] User-selected storage, explicit pause/resume, verified post-transfer content checks, and storage migrations
 - [x] Embedded WebView browsing with DownloadListener-based direct-file offers
@@ -26,11 +26,11 @@ WAFF is an Android media-downloader project in active development. The app can d
 - [ ] Device review, product-wide accessibility/performance review, and stable release
 - [x] Preview APK build/release automation (unsigned release variant; debug build included for evaluation)
 
-The Browser tab uses Android WebView for ordinary browsing and offers a Download action only when WebView reports a downloadable image/audio/video MIME type. It does not inspect protected page internals. The direct-file workflow requires an HTTPS server that supports HEAD and returns an image/audio/video MIME type; ambiguous responses are rejected rather than saved as media. The experimental NewPipe path uses the extractor's service registry to present streams it can resolve; it does not merge separate audio/video streams, and video-only choices are explicitly identified. Transfers are managed by Android DownloadManager, so pause/resume behavior and notifications depend on Android and the device.
+The Browser tab uses Android WebView, upgrades HTTP navigations to HTTPS, blocks file/content access and mixed content, disables third-party cookies, and offers downloads only for reported image/audio/video MIME types. It does not inspect protected page internals. Users can clear WebView cookies, cache, and form data in Settings. The direct-file workflow requires an HTTPS server that supports HEAD and returns a matching image/audio/video MIME type. The experimental NewPipe/yt-dlp path presents returned formats, identifies video-only tracks, and can queue separate audio/video formats for background MKV muxing. Compilation and pull-request CI builds pass; extraction and mux playback still require live-service and device verification. Direct-file transfers use Android DownloadManager; managed merge jobs use Room and WorkManager. Android controls transfer notifications and DownloadManager pause/resume behavior.
 
 ## Architecture
 
-URL routing, MIME classification, filename rules, and selection-preservation behavior are independently tested. Room persists WAFF transfer metadata while Android DownloadManager remains authoritative for transfer state and file URIs. NewPipe Extractor and yt-dlp are used on-device for metadata and stream resolution; stream compatibility and access remain dependent on upstream services. The optional FFmpeg runtime is not yet bundled, so separate audio/video streams are not merged. No ad/analytics SDKs or developer telemetry are included.
+URL routing, MIME classification, filename rules, and selection-preservation behavior are unit-tested. Room stores both DownloadManager metadata and managed merge-job state; Android DownloadManager remains authoritative for direct transfer status and file URIs. NewPipe Extractor and yt-dlp resolve media, while the bundled FFmpeg runtime muxes separate streams. Compatibility depends on upstream services, and merge playback remains unverified on-device. No ad/analytics SDKs or developer telemetry are included.
 
 ## Build
 
@@ -45,7 +45,7 @@ The generated outputs are under `app/build/outputs/apk/`. No wrapper is included
 
 ## Privacy and permissions
 
-The app requests Internet access for link preflight and transfers. It does not request broad storage, notification, or account permissions; Android DownloadManager handles the direct-file destination. No cookies or authentication material are collected. Future permissions will be justified and documented before introduction.
+The app requests Internet access and foreground data-sync service access for transfers. It does not request broad storage, notification, or account permissions. Android DownloadManager handles direct-file destinations; merged outputs are stored in app-specific external storage. WAFF does not read or export WebView cookies; Android WebView can retain first-party site data until cleared in Settings. The extractor does not promise access to private, login-gated, or DRM-protected media.
 
 ## Licensing
 
