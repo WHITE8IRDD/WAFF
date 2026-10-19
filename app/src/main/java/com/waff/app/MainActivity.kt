@@ -43,14 +43,20 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
+    private var incomingLink by mutableStateOf("")
+    private var incomingIntentVersion by mutableIntStateOf(0)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { WaffApp(sharedText(intent)) }
+        incomingLink = sharedText(intent)
+        setContent { WaffApp(incomingLink, incomingIntentVersion) }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        incomingLink = sharedText(intent)
+        incomingIntentVersion++
     }
 
     private fun sharedText(source: Intent?): String = when (source?.action) {
@@ -67,10 +73,13 @@ internal val Line = androidx.compose.ui.graphics.Color(0xFF2A2A2A)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun WaffApp(sharedText: String) {
+private fun WaffApp(sharedText: String, intentVersion: Int) {
     var selected by remember { mutableStateOf("Home") }
     var link by remember { mutableStateOf(sharedText) }
     var feedback by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(intentVersion) {
+        if (sharedText.isNotBlank()) { link = sharedText; selected = "Home"; feedback = null }
+    }
     val context = LocalContext.current
     val repository = remember { DirectDownloadRepository(context) }
     MaterialTheme(colorScheme = darkColorScheme(
