@@ -265,7 +265,7 @@ private fun HomeScreen(
                 },
                 onSaveSubtitle = { subtitle -> scope.launch {
                     when (val result = repository.enqueueResolvedSubtitle(subtitle.url, info.title, subtitle.languageTag, subtitle.extension)) {
-                        is EnqueueResult.Added -> { setFeedback("Subtitle queued · ${result.filename}"); onQueued() }
+                        is EnqueueResult.Added -> setFeedback("Subtitle queued · ${result.filename}")
                         is EnqueueResult.Rejected -> setFeedback(result.reason)
                     }
                 } },
