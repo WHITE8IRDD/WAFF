@@ -16,7 +16,11 @@ import com.waff.app.core.DownloadDatabase
 import com.waff.app.core.ManagedTransferRecord
 import android.app.DownloadManager
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.suspendCancellableCoroutine
 import java.io.File
+import java.util.concurrent.Executors
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 /** Persistent foreground yt-dlp job for selecting separate video/audio formats and muxing them locally. */
 internal class MergedDownloadWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
@@ -39,14 +43,8 @@ internal class MergedDownloadWorker(context: Context, params: WorkerParameters) 
                 addOption("--merge-output-format", "mkv")
                 addOption("-o", outputTemplate)
             }
-            val response = YoutubeDL.getInstance().execute(request, "waff-$transferId") { progress, _, _ ->
-                val percent = progress.toInt().coerceIn(0, 99)
-                val bytes = if (record.totalBytes > 0) record.totalBytes * percent / 100 else 0L
-                kotlinx.coroutines.runBlocking {
-                    dao.updateProgress(transferId, DownloadManager.STATUS_RUNNING, bytes, record.totalBytes, 0)
-                    setProgress(androidx.work.workDataOf("progress" to percent))
-                }
-            }
+            dao.updateProgress(transferId, DownloadManager.STATUS_RUNNING, record.bytesDownloaded, record.totalBytes, 0)
+            val response = executeCancellable(request, "waff-$transferId", record)
             if (response.exitCode != 0) return fail(record)
             val output = File(parent, record.filename)
             if (!output.isFile || output.length() <= 0L) return fail(record)
@@ -60,6 +58,35 @@ internal class MergedDownloadWorker(context: Context, params: WorkerParameters) 
             cleanupPartial(record)
             dao.updateProgress(transferId, DownloadManager.STATUS_FAILED, record.bytesDownloaded, record.totalBytes, DownloadManager.ERROR_UNKNOWN)
             Result.failure()
+        }
+    }
+
+    private suspend fun executeCancellable(
+        request: YoutubeDLRequest,
+        processId: String,
+        record: ManagedTransferRecord
+    ) = suspendCancellableCoroutine<com.yausername.youtubedl_android.YoutubeDLResponse> { continuation ->
+        val executor = Executors.newSingleThreadExecutor()
+        val task = executor.submit {
+            try {
+                val response = YoutubeDL.getInstance().execute(request, processId) { progress, _, _ ->
+                    val percent = progress.toInt().coerceIn(0, 99)
+                    kotlinx.coroutines.runBlocking {
+                        dao.updateProgress(record.id, DownloadManager.STATUS_RUNNING, record.bytesDownloaded, record.totalBytes, 0)
+                        setProgress(androidx.work.workDataOf("progress" to percent))
+                    }
+                }
+                continuation.resume(response)
+            } catch (error: Throwable) {
+                continuation.resumeWithException(error)
+            } finally {
+                executor.shutdown()
+            }
+        }
+        continuation.invokeOnCancellation {
+            runCatching { YoutubeDL.getInstance().destroyProcessById(processId) }
+            task.cancel(true)
+            executor.shutdownNow()
         }
     }
 
