@@ -70,9 +70,10 @@ internal class YtDlpMediaExtractor(context: Context) {
         require(records.isNotEmpty()) { "Instagram returned no media items." }
         val formats = records.flatMapIndexed { itemIndex, item ->
             val listed = item.optJSONArray("formats")
-            val candidates = if (listed == null || listed.length() == 0) listOf(item)
-                else (0 until listed.length()).mapNotNull { listed.optJSONObject(it) }
-            candidates.mapNotNull { candidate -> candidate.toInstagramFormat(itemIndex, item) }
+            val useRootMedia = listed == null || listed.length() == 0
+            val candidates = if (useRootMedia) listOf(item)
+                else (0 until listed!!.length()).mapNotNull { listed.optJSONObject(it) }
+            candidates.mapNotNull { candidate -> candidate.toInstagramFormat(itemIndex, item, useRootMedia) }
         }.distinctBy { it.id }
         val first = records.first()
         val title = first.optString("title").takeIf { it.isNotBlank() }
@@ -94,9 +95,9 @@ internal class YtDlpMediaExtractor(context: Context) {
         )
     }
 
-    private fun JSONObject.toInstagramFormat(itemIndex: Int, item: JSONObject): ExtractedFormat? {
+    private fun JSONObject.toInstagramFormat(itemIndex: Int, item: JSONObject, useRootMedia: Boolean): ExtractedFormat? {
         val streamUrl = optString("url").takeIf { it.startsWith("https://", ignoreCase = true) }
-            ?: item.optString("url").takeIf { it.startsWith("https://", ignoreCase = true) }
+            ?: (if (useRootMedia) item.optString("url").takeIf { it.startsWith("https://", ignoreCase = true) } else null)
             ?: return null
         val ext = optString("ext", item.optString("ext")).lowercase()
         val vcodec = optString("vcodec", item.optString("vcodec"))
