@@ -48,14 +48,19 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG already exists; refusing to overwrite release assets." >&2
-            exit 1
+            existing_count="$(gh release view "$TAG" --json assets --jq '.assets | length')"
+            if [[ "$existing_count" != "0" ]]; then
+              echo "Release $TAG already has assets; refusing to overwrite them." >&2
+              exit 1
+            fi
+            gh release upload "$TAG" release-assets/*.apk release-assets/SHA256SUMS.txt
+          else
+            gh release create "$TAG" release-assets/*.apk release-assets/SHA256SUMS.txt \
+              --target "$GITHUB_SHA" \
+              --title "WAFF $TAG — early preview" \
+              --prerelease \
+              --notes "Early preview build. This is not a stable release and does not implement the full product specification. Direct HTTPS image, audio, and video files are downloaded through Android DownloadManager. Social-platform post extraction, browser detection, and several specified management features are not yet implemented. The release APK is unsigned and requires signing for standard installation; the debug APK is signed with a temporary CI debug key for evaluation."
           fi
-          gh release create "$TAG" release-assets/*.apk release-assets/SHA256SUMS.txt \
-            --target "$GITHUB_SHA" \
-            --title "WAFF $TAG — early preview" \
-            --prerelease \
-            --notes "Early preview build. This is not a stable release and does not implement the full product specification. Direct HTTPS image, audio, and video files are downloaded through Android DownloadManager. Social-platform post extraction, browser detection, and several specified management features are not yet implemented. The release APK is unsigned and requires signing for standard installation; the debug APK is signed with a temporary CI debug key for evaluation."
           gh release view "$TAG" --json assets --jq '.assets[].name' | sort > /tmp/released-assets.txt
           printf '%s\n' "WAFF-${TAG}-debug.apk" "WAFF-${TAG}-release-unsigned.apk" SHA256SUMS.txt | sort > /tmp/expected-assets.txt
           diff -u /tmp/expected-assets.txt /tmp/released-assets.txt
