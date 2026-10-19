@@ -1,6 +1,6 @@
 # WAFF
 
-WAFF is an Android media-downloader project in active development. The app can download publicly reachable direct HTTPS image, audio, and video files through Android's DownloadManager after checking the response MIME type. It also has an experimental NewPipe Extractor flow: for URLs recognized by the installed extractor, WAFF retrieves metadata, lists returned formats, saves available subtitle tracks or thumbnails, and queues a selected stream. This is an early milestone, not a stable release; upstream service availability varies, and protected, restricted, or rate-limited media may not work.
+WAFF is an Android media-downloader project in active development. The app can download publicly reachable direct HTTPS image, audio, and video files through Android's DownloadManager after checking the response MIME type. It also has an experimental extraction flow: NewPipe handles recognized services, while bundled yt-dlp is used as a fallback for public Instagram, TikTok, and Facebook links. WAFF lists returned formats, saves available subtitles or thumbnails, and queues a selected direct stream. Availability varies by service; private, DRM-protected, login-gated, or rate-limited media is not promised.
 
 [![Android CI](https://github.com/WHITE8IRDD/WAFF/actions/workflows/build.yml/badge.svg)](https://github.com/WHITE8IRDD/WAFF/actions/workflows/build.yml) · [GitHub Releases](https://github.com/WHITE8IRDD/WAFF/releases)
 
@@ -17,7 +17,8 @@ WAFF is an Android media-downloader project in active development. The app can d
 - [ ] Room DAO emulator integration test (manual CI dispatch only; successful run pending)
 - [x] NewPipe-recognized service metadata and format-selection UI (compiled in CI; live-service/device verification pending)
 - [x] Save extracted subtitle tracks and thumbnails as separate files (compiled in CI; runtime verification pending)
-- [ ] Instagram, TikTok, and Facebook extraction; separate audio/video stream merging and full regression matrix
+- [x] yt-dlp fallback wired for Instagram, TikTok, and Facebook public pages (build/runtime verification pending)
+- [ ] Separate audio/video stream merging and full regression matrix
 - [x] Room-persisted transfer metadata joined to DownloadManager status and completed-file actions
 - [ ] User-selected storage, explicit pause/resume, verified post-transfer content checks, and storage migrations
 - [x] Embedded WebView browsing with DownloadListener-based direct-file offers
@@ -29,7 +30,7 @@ The Browser tab uses Android WebView for ordinary browsing and offers a Download
 
 ## Architecture
 
-URL routing, MIME classification, filename rules, and selection-preservation behavior are independently tested. Room persists WAFF transfer metadata while Android DownloadManager remains authoritative for transfer state and file URIs. NewPipe Extractor performs experimental metadata/stream resolution for upstream-recognized services; stream compatibility and access remain dependent on the source service. No ad/analytics SDKs or developer telemetry are included.
+URL routing, MIME classification, filename rules, and selection-preservation behavior are independently tested. Room persists WAFF transfer metadata while Android DownloadManager remains authoritative for transfer state and file URIs. NewPipe Extractor and yt-dlp are used on-device for metadata and stream resolution; stream compatibility and access remain dependent on upstream services. The optional FFmpeg runtime is not yet bundled, so separate audio/video streams are not merged. No ad/analytics SDKs or developer telemetry are included.
 
 ## Build
 

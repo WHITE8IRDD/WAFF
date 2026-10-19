@@ -32,7 +32,8 @@ internal data class ExtractedFormat(
     val frameRate: Int? = null,
     val codec: String? = null,
     val bitrate: Int? = null,
-    val language: String? = null
+    val language: String? = null,
+    val headers: Map<String, String> = emptyMap()
 )
 
 internal data class ExtractedSubtitle(
@@ -128,18 +129,14 @@ internal class NewPipeMediaExtractor {
         return runCatching { NewPipe.getServiceByUrl(url) }.isSuccess
     }
 
-    private fun initializeRuntime() {
-        if (initialized.compareAndSet(false, true)) {
-            try {
-                NewPipe.init(UrlConnectionDownloader())
-            } catch (failure: Throwable) {
-                initialized.set(false)
-                throw failure
-            }
-        }
+    private fun initializeRuntime() = synchronized(initializationLock) {
+        if (initialized.get()) return@synchronized
+        NewPipe.init(UrlConnectionDownloader())
+        initialized.set(true)
     }
 
     companion object {
+        private val initializationLock = Any()
         private val initialized = AtomicBoolean(false)
     }
 }

@@ -6,3 +6,5 @@
 -dontwarn javax.script.**
 -dontwarn jdk.dynalink.**
 -dontwarn java.beans.**
+# yt-dlp metadata is deserialized reflectively by Jackson.
+-keep class com.yausername.youtubedl_android.mapper.** { *; }

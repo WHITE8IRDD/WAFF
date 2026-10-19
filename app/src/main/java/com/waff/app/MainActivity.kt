@@ -33,11 +33,13 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.waff.app.core.DirectDownloadRepository
 import com.waff.app.core.EnqueueResult
+import com.waff.app.core.Platform
 import com.waff.app.core.PlatformLink
 import com.waff.app.core.UrlRouter
 import com.waff.app.core.TransferSnapshot
 import com.waff.app.platform.newpipe.ExtractedMediaInfo
 import com.waff.app.platform.newpipe.NewPipeMediaExtractor
+import com.waff.app.platform.newpipe.YtDlpMediaExtractor
 import com.waff.app.platform.newpipe.MediaFormatPolicy
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -130,8 +132,10 @@ private fun HomeScreen(
 ) {
     val clipboard = LocalClipboardManager.current
     val focus = LocalFocusManager.current
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val mediaExtractor = remember { NewPipeMediaExtractor() }
+    val ytDlpExtractor = remember(context) { YtDlpMediaExtractor(context) }
     var mediaInfo by remember { mutableStateOf<ExtractedMediaInfo?>(null) }
     var selectedFormatId by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
@@ -147,7 +151,9 @@ private fun HomeScreen(
         }
         PlatformLink.Invalid -> null
     }
-    val canExtract = extractorUrl?.let(mediaExtractor::supportsUrl) == true
+    val newPipeCanExtract = extractorUrl?.let(mediaExtractor::supportsUrl) == true
+    val socialNeedsFallback = (parsedLink as? PlatformLink.Supported)?.platform?.let { it in setOf(Platform.INSTAGRAM, Platform.TIKTOK, Platform.FACEBOOK) } == true
+    val canExtract = newPipeCanExtract || socialNeedsFallback
     Column(modifier.fillMaxSize().padding(horizontal = 24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         Spacer(Modifier.height(24.dp))
         Text("Save media.\nKeep it yours.", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Medium, lineHeight = 38.sp)
@@ -174,14 +180,15 @@ private fun HomeScreen(
                     try {
                         val info = mediaInfo
                         if (canExtract && info == null) {
-                            val extracted = mediaExtractor.extract(extractorUrl.orEmpty())
+                            val extracted = if (socialNeedsFallback) ytDlpExtractor.extract(extractorUrl.orEmpty())
+                                else mediaExtractor.extract(extractorUrl.orEmpty())
                             mediaInfo = extracted
                             selectedFormatId = MediaFormatPolicy.defaultFormat(extracted)?.id
-                            setFeedback(if (extracted.formats.isEmpty()) "No downloadable formats were returned for this video." else null)
+                            setFeedback(if (extracted.formats.isEmpty()) "No downloadable formats were returned for this media." else null)
                         } else if (info != null) {
                             val format = info.formats.firstOrNull { it.id == selectedFormatId }
                             if (format == null) setFeedback("Select one of the formats returned by the extractor.")
-                            else when (val result = repository.enqueueResolvedMedia(format.url, info.title, format.mimeType)) {
+                            else when (val result = repository.enqueueResolvedMedia(format.url, info.title, format.mimeType, format.headers)) {
                                 is EnqueueResult.Added -> { setFeedback("Download started · ${result.filename}"); onQueued() }
                                 is EnqueueResult.Rejected -> setFeedback(result.reason)
                             }

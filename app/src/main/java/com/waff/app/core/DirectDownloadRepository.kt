@@ -68,11 +68,20 @@ class DirectDownloadRepository(context: Context) {
         enqueueVerified(url, uri.lastPathSegment.orEmpty(), mime)
     }
 
-    suspend fun enqueueResolvedMedia(url: String, title: String, expectedMime: String): EnqueueResult = withContext(Dispatchers.IO) {
+    suspend fun enqueueResolvedMedia(
+        url: String,
+        title: String,
+        expectedMime: String,
+        requestHeaders: Map<String, String> = emptyMap()
+    ): EnqueueResult = withContext(Dispatchers.IO) {
         val uri = runCatching { Uri.parse(url) }.getOrNull()
             ?: return@withContext EnqueueResult.Rejected("The extractor returned an invalid media URL.")
         if (uri.scheme != "https" || uri.host.isNullOrBlank() || uri.userInfo != null) {
             return@withContext EnqueueResult.Rejected("The extracted stream URL is not a safe HTTPS address.")
+        }
+        val safeHeaders = requestHeaders.filter { (name, value) ->
+            name.lowercase() in setOf("user-agent", "referer", "origin", "accept") &&
+                value.length <= 512 && '\r' !in value && '\n' !in value
         }
         val response = try {
             val connection = (URL(url).openConnection() as HttpURLConnection).apply {
@@ -81,6 +90,7 @@ class DirectDownloadRepository(context: Context) {
                 readTimeout = 10_000
                 instanceFollowRedirects = true
                 setRequestProperty("User-Agent", "WAFF Android")
+                safeHeaders.forEach { (name, value) -> setRequestProperty(name, value) }
             }
             try {
                 val code = connection.responseCode
@@ -94,7 +104,7 @@ class DirectDownloadRepository(context: Context) {
         } catch (_: Exception) {
             return@withContext EnqueueResult.Rejected("Could not validate the selected media stream. Refresh the details and try again.")
         }
-        enqueueVerified(url, title, response)
+        enqueueVerified(url, title, response, requestHeaders = safeHeaders)
     }
 
     suspend fun enqueueResolvedSubtitle(url: String, title: String, language: String, extension: String): EnqueueResult = withContext(Dispatchers.IO) {
@@ -125,7 +135,13 @@ class DirectDownloadRepository(context: Context) {
         enqueueVerified(url, "$title $safeLanguage", mime, extension)
     }
 
-    private suspend fun enqueueVerified(url: String, suggestedName: String, mime: String, extensionOverride: String? = null): EnqueueResult {
+    private suspend fun enqueueVerified(
+        url: String,
+        suggestedName: String,
+        mime: String,
+        extensionOverride: String? = null,
+        requestHeaders: Map<String, String> = emptyMap()
+    ): EnqueueResult {
         val extension = MimeTypeMap.getSingleton().getExtensionFromMimeType(mime) ?: extensionOverride
         val candidate = FileNameRules.withMimeExtension(suggestedName, extension)
         val filename = uniqueFilename(candidate)
@@ -138,6 +154,7 @@ class DirectDownloadRepository(context: Context) {
                 .addRequestHeader("User-Agent", "WAFF Android")
                 .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
                 .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "WAFF/$filename")
+            requestHeaders.forEach { (name, value) -> request.addRequestHeader(name, value) }
             val downloadId = manager.enqueue(request)
             id = downloadId
             dao.insert(DownloadRecord(downloadId, filename, mime, System.currentTimeMillis()))
