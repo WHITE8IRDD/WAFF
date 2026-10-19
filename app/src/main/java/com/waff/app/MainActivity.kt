@@ -36,6 +36,7 @@ import com.waff.app.core.EnqueueResult
 import com.waff.app.core.Platform
 import com.waff.app.core.PlatformLink
 import com.waff.app.core.UrlRouter
+import com.waff.app.core.SharedLinkParser
 import com.waff.app.core.TransferSnapshot
 import com.waff.app.platform.newpipe.ExtractedMediaInfo
 import com.waff.app.platform.newpipe.NewPipeMediaExtractor
@@ -54,6 +55,10 @@ class MainActivity : ComponentActivity() {
         incomingLink = sharedText(intent)
         incomingQuickDownload = intent.getBooleanExtra(EXTRA_QUICK_DOWNLOAD, false)
         setContent { WaffApp(incomingLink, incomingIntentVersion, incomingQuickDownload) }
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 8101)
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -65,7 +70,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun sharedText(source: Intent?): String = when (source?.action) {
-        Intent.ACTION_SEND -> source.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString().orEmpty()
+        Intent.ACTION_SEND -> source.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()?.let(SharedLinkParser::extract).orEmpty()
         Intent.ACTION_VIEW -> source.dataString.orEmpty()
         else -> ""
     }
@@ -152,6 +157,7 @@ private fun HomeScreen(
     var alsoSaveThumbnail by remember { mutableStateOf(false) }
     var quickPromptOpen by remember(quickDownload, link) { mutableStateOf(quickDownload && link.isNotBlank()) }
     var quickSaveRequested by remember { mutableStateOf(false) }
+    var quickSelectionRequested by remember { mutableStateOf(false) }
     val parsedLink = UrlRouter.parse(link)
     val extractorUrl = when (parsedLink) {
         is PlatformLink.Supported -> parsedLink.canonicalUrl
@@ -164,7 +170,16 @@ private fun HomeScreen(
         }
         PlatformLink.Invalid -> null
     }
-    val newPipeCanExtract = extractorUrl?.let(mediaExtractor::supportsUrl) == true
+    var newPipeCanExtract by remember(extractorUrl) { mutableStateOf(false) }
+    val shouldCheckNewPipe = parsedLink is PlatformLink.Supported
+    var checkingExtractor by remember(extractorUrl) { mutableStateOf(shouldCheckNewPipe) }
+    LaunchedEffect(extractorUrl) {
+        checkingExtractor = shouldCheckNewPipe
+        newPipeCanExtract = if (extractorUrl == null || !shouldCheckNewPipe) false else runCatching {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { mediaExtractor.supportsUrl(extractorUrl) }
+        }.getOrDefault(false)
+        checkingExtractor = false
+    }
     val isInstagram = (parsedLink as? PlatformLink.Supported)?.platform == Platform.INSTAGRAM
     val socialNeedsFallback = (parsedLink as? PlatformLink.Supported)?.platform?.let { it in setOf(Platform.INSTAGRAM, Platform.TIKTOK, Platform.FACEBOOK) } == true
     val canExtract = newPipeCanExtract || socialNeedsFallback
@@ -181,7 +196,8 @@ private fun HomeScreen(
                     mediaInfo = info
                     showFormatsSheet = true
                     setFeedback("No combined default stream; choose a quality below.")
-                } else when (val result = repository.enqueueResolvedMedia(format.url, info.title, format.mimeType, format.headers)) {
+                } else when (val result = repository.enqueueResolvedMedia(format.url, info.title, format.mimeType, format.headers,
+                    sourcePageUrl = info.canonicalUrl, formatLabel = format.label, hashtags = info.hashtags)) {
                     is EnqueueResult.Added -> { setFeedback("Quick download started · ${result.filename}"); onQueued() }
                     is EnqueueResult.Rejected -> setFeedback(result.reason)
                 }
@@ -193,12 +209,32 @@ private fun HomeScreen(
             setFeedback("WAFF could not extract this shared link. Open WAFF to choose another option.")
         } finally { busy = false; quickSaveRequested = false }
     }
+    LaunchedEffect(quickSelectionRequested) {
+        if (!quickSelectionRequested) return@LaunchedEffect
+        busy = true
+        try {
+            val info = ytDlpExtractor.extractInstagram(extractorUrl.orEmpty())
+            mediaInfo = info
+            selectedFormatId = MediaFormatPolicy.defaultFormat(info)?.id
+            selectedVideoFormatId = info.formats.firstOrNull { it.kind == com.waff.app.platform.newpipe.ExtractedFormatKind.VIDEO_ONLY }?.id
+            selectedAudioFormatId = info.formats.firstOrNull { it.kind == com.waff.app.platform.newpipe.ExtractedFormatKind.AUDIO }?.id
+            showFormatsSheet = true
+            setFeedback(if (info.formats.isEmpty()) "Instagram returned no downloadable media items." else null)
+        } catch (error: Exception) {
+            android.util.Log.e("WAFF", "Instagram extraction failed (${error.javaClass.simpleName})")
+            setFeedback("Instagram extraction failed (${error.javaClass.simpleName}). Check that the post is public and retry.")
+        } finally { busy = false; quickSelectionRequested = false }
+    }
     Column(modifier.fillMaxSize().padding(horizontal = 24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         Spacer(Modifier.height(24.dp))
         Text("Save media.\nKeep it yours.", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Medium, lineHeight = 38.sp)
         Text("Paste a supported media page or a direct file URL.", style = MaterialTheme.typography.bodyMedium, color = Muted)
         OutlinedTextField(value = link, onValueChange = { onLinkChange(it); setFeedback(null); mediaInfo = null; selectedFormatId = null; selectedVideoFormatId = null; selectedAudioFormatId = null }, modifier = Modifier.fillMaxWidth(),
             placeholder = { Text("Paste a direct media link", color = Muted) }, leadingIcon = { Icon(Icons.Outlined.Link, null) },
+            trailingIcon = { if (link.isNotEmpty()) IconButton(onClick = {
+                onLinkChange(""); setFeedback(null); mediaInfo = null; selectedFormatId = null
+                selectedVideoFormatId = null; selectedAudioFormatId = null; alsoSaveThumbnail = false
+            }) { Icon(Icons.Outlined.Close, contentDescription = "Clear link") } },
             singleLine = true, shape = RoundedCornerShape(12.dp), keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
             keyboardActions = KeyboardActions(onGo = { focus.moveFocus(FocusDirection.Down) }),
             colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Paper, unfocusedBorderColor = Line, cursorColor = Paper, focusedTextColor = Paper, unfocusedTextColor = Paper))
@@ -231,7 +267,8 @@ private fun HomeScreen(
                         } else if (info != null) {
                             val format = info.formats.firstOrNull { it.id == selectedFormatId }
                             if (format == null) setFeedback("Select one of the formats returned by the extractor.")
-                            else when (val result = repository.enqueueResolvedMedia(format.url, info.title, format.mimeType, format.headers)) {
+                            else when (val result = repository.enqueueResolvedMedia(format.url, info.title, format.mimeType, format.headers,
+                    sourcePageUrl = info.canonicalUrl, formatLabel = format.label, hashtags = info.hashtags)) {
                                 is EnqueueResult.Added -> {
                                     setFeedback("Download started · ${result.filename}")
                                     if (alsoSaveThumbnail && !info.thumbnailUrl.isNullOrBlank()) {
@@ -252,14 +289,18 @@ private fun HomeScreen(
                         }
                     } catch (_: java.io.IOException) {
                         setFeedback("Network request failed. Check your connection and try again.")
-                    } catch (_: Exception) {
-                        setFeedback("The extractor could not read this media page. It may be unavailable, restricted, rate-limited, or unsupported.")
+                    } catch (error: Exception) {
+                        if (isInstagram) {
+                            android.util.Log.e("WAFF", "Instagram extraction failed (${error.javaClass.simpleName})")
+                            val diagnostic = error.message.orEmpty().replace(Regex("https?://\\S+"), "[shared URL]").take(160)
+                            setFeedback("Instagram extraction failed (${error.javaClass.simpleName})${diagnostic.takeIf { it.isNotBlank() }?.let { ": $it" }.orEmpty()}")
+                        } else setFeedback("The extractor could not read this media page. It may be unavailable, restricted, rate-limited, or unsupported.")
                     } finally { busy = false }
                 }
-            }, enabled = link.isNotBlank() && !busy && (mediaInfo == null || selectedFormatId != null), shape = RoundedCornerShape(10.dp),
+            }, enabled = link.isNotBlank() && !busy && !checkingExtractor && (mediaInfo == null || selectedFormatId != null), shape = RoundedCornerShape(10.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Paper, contentColor = Ink)) {
                 if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = Ink)
-                else Text(if (canExtract && mediaInfo == null) "Get formats" else if (mediaInfo != null) "Download selected" else "Download", fontWeight = FontWeight.SemiBold)
+                else Text(if (checkingExtractor) "Checking link…" else if (canExtract && mediaInfo == null) "Get formats" else if (mediaInfo != null) "Download selected" else "Download", fontWeight = FontWeight.SemiBold)
                 if (!busy) { Spacer(Modifier.width(8.dp)); Icon(Icons.Outlined.ArrowDownward, null, Modifier.size(18.dp)) }
             }
         }
@@ -279,9 +320,12 @@ private fun HomeScreen(
     }
     if (quickPromptOpen) AlertDialog(
         onDismissRequest = { quickPromptOpen = false },
-        title = { Text("Quick Download") },
-        text = { Text("Save the shared media using the best available default format?") },
-        confirmButton = { TextButton(onClick = { quickPromptOpen = false; quickSaveRequested = true }) { Text("Save") } },
+        title = { Text(if (isInstagram) "Choose Instagram media" else "Quick Download") },
+        text = { Text(if (isInstagram) "Review the images and videos in this post before downloading." else "Save the shared media using the best available default format?") },
+        confirmButton = { TextButton(onClick = {
+            quickPromptOpen = false
+            if (isInstagram) quickSelectionRequested = true else quickSaveRequested = true
+        }) { Text(if (isInstagram) "Find media" else "Save") } },
         dismissButton = { TextButton(onClick = { quickPromptOpen = false }) { Text("Cancel") } },
         containerColor = androidx.compose.ui.graphics.Color(0xFF111111), titleContentColor = Paper, textContentColor = Muted
     )
@@ -320,38 +364,87 @@ private fun HomeScreen(
                     }
                 } },
                 alsoSaveThumbnail = alsoSaveThumbnail,
-                onAlsoSaveThumbnail = { alsoSaveThumbnail = it })
+                onAlsoSaveThumbnail = { alsoSaveThumbnail = it },
+                onDownloadSelected = { formats ->
+                    scope.launch {
+                        if (busy || formats.isEmpty()) return@launch
+                        busy = true
+                        var queued = 0
+                        var failure: String? = null
+                        try {
+                            formats.forEach { format ->
+                                if (failure == null) {
+                                    val itemTitle = format.mediaIndex?.let { "${info.title} item ${it + 1}" } ?: info.title
+                                    when (val result = repository.enqueueResolvedMedia(format.url, itemTitle, format.mimeType, format.headers,
+                                        sourcePageUrl = info.canonicalUrl, formatLabel = format.label, hashtags = info.hashtags)) {
+                                        is EnqueueResult.Added -> queued++
+                                        is EnqueueResult.Rejected -> failure = result.reason
+                                    }
+                                }
+                            }
+                            if (alsoSaveThumbnail && formats.any { it.kind == com.waff.app.platform.newpipe.ExtractedFormatKind.VIDEO_WITH_AUDIO || it.kind == com.waff.app.platform.newpipe.ExtractedFormatKind.VIDEO_ONLY } && !info.thumbnailUrl.isNullOrBlank()) {
+                                when (val thumbnail = repository.enqueueResolvedMedia(info.thumbnailUrl, "${info.title} thumbnail", "image/*",
+                                    sourcePageUrl = info.canonicalUrl, formatLabel = "Thumbnail", hashtags = info.hashtags)) {
+                                    is EnqueueResult.Added -> Unit
+                                    is EnqueueResult.Rejected -> if (failure == null) failure = thumbnail.reason
+                                }
+                            }
+                            setFeedback(failure ?: "${if (queued == 1) "Download" else "$queued downloads"} queued")
+                            if (queued > 0) { showFormatsSheet = false; onQueued() }
+                        } finally { busy = false }
+                    }
+                })
         }
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun TransferList(repository: DirectDownloadRepository, historyOnly: Boolean, modifier: Modifier = Modifier) {
     var transfers by remember { mutableStateOf(emptyList<TransferSnapshot>()) }
     var query by remember { mutableStateOf("") }
     var pendingDelete by remember { mutableStateOf<TransferSnapshot?>(null) }
+    var historyDetails by remember { mutableStateOf<TransferSnapshot?>(null) }
+    var selectedHistoryIds by remember { mutableStateOf(emptySet<Long>()) }
+    var pendingHistoryRemoval by remember { mutableStateOf<Pair<Set<Long>, Boolean>?>(null) }
     var feedback by remember { mutableStateOf<String?>(null) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, repository) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) scope.launch { transfers = repository.snapshots() }
+            if (event == Lifecycle.Event.ON_RESUME) scope.launch { transfers = repository.snapshots(historyOnly = historyOnly) }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
-    LaunchedEffect(repository) {
-        while (true) { transfers = repository.snapshots(); delay(1000) }
+    LaunchedEffect(repository, historyOnly) {
+        transfers = repository.snapshots(historyOnly = historyOnly)
+        if (!historyOnly) while (true) { delay(1500); transfers = repository.snapshots(historyOnly = false) }
     }
     val visible = transfers.filter { if (historyOnly) it.status == DownloadManager.STATUS_SUCCESSFUL else it.status != DownloadManager.STATUS_SUCCESSFUL }
         .filter { !historyOnly || it.filename.contains(query.trim(), ignoreCase = true) }
     Column(modifier.fillMaxSize().padding(horizontal = 20.dp)) {
         Text(if (historyOnly) "History" else "Queue", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Medium,
             modifier = Modifier.padding(top = 20.dp, bottom = 16.dp))
-        if (historyOnly) OutlinedTextField(value = query, onValueChange = { query = it }, modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
-            singleLine = true, placeholder = { Text("Search downloaded files", color = Muted) }, leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
-            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Paper, unfocusedBorderColor = Line, cursorColor = Paper, focusedTextColor = Paper, unfocusedTextColor = Paper))
+        if (historyOnly) {
+            OutlinedTextField(value = query, onValueChange = { query = it }, modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                singleLine = true, placeholder = { Text("Search downloaded files", color = Muted) }, leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
+                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Paper, unfocusedBorderColor = Line, cursorColor = Paper, focusedTextColor = Paper, unfocusedTextColor = Paper))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = {
+                    selectedHistoryIds = if (visible.all { it.id in selectedHistoryIds } && visible.isNotEmpty()) emptySet()
+                        else selectedHistoryIds + visible.map { it.id }
+                }) { Text(if (visible.isNotEmpty() && visible.all { it.id in selectedHistoryIds }) "Deselect all" else "Select all") }
+                TextButton(onClick = {
+                    val ids = transfers.filter { it.status == DownloadManager.STATUS_SUCCESSFUL }.mapTo(linkedSetOf()) { it.id }
+                    if (ids.isNotEmpty()) pendingHistoryRemoval = ids to true
+                }, enabled = transfers.any { it.status == DownloadManager.STATUS_SUCCESSFUL }) { Text("Clear all") }
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = { if (selectedHistoryIds.isNotEmpty()) pendingHistoryRemoval = selectedHistoryIds to false },
+                    enabled = selectedHistoryIds.isNotEmpty()) { Text("Delete selected (${selectedHistoryIds.size})") }
+            }
+        }
         if (feedback != null) Text(feedback!!, color = Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 8.dp))
         if (visible.isEmpty()) {
             val message = when {
@@ -362,19 +455,21 @@ private fun TransferList(repository: DirectDownloadRepository, historyOnly: Bool
             Text(message, style = MaterialTheme.typography.bodyMedium, color = Muted, modifier = Modifier.padding(top = 8.dp))
         } else LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             items(visible, key = { it.id }) { transfer ->
-                TransferRow(transfer,
-                    onPause = { scope.launch { repository.pause(transfer.id); transfers = repository.snapshots(); feedback = "Merge paused · ${transfer.filename}" } },
+                TransferRow(transfer, historyOnly, transfer.id in selectedHistoryIds,
+                    onToggleSelect = { checked -> selectedHistoryIds = if (checked) selectedHistoryIds + transfer.id else selectedHistoryIds - transfer.id },
+                    onDetails = { historyDetails = transfer },
+                    onPause = { scope.launch { repository.pause(transfer.id); transfers = repository.snapshots(historyOnly = historyOnly); feedback = "Merge paused · ${transfer.filename}" } },
                     onResume = { scope.launch {
                         feedback = if (repository.resume(transfer.id)) "Merge resumed · ${transfer.filename}" else "Could not resume this merge. Try again."
-                        transfers = repository.snapshots()
+                        transfers = repository.snapshots(historyOnly = historyOnly)
                     } },
-                    onCancel = { scope.launch { repository.cancel(transfer.id); transfers = repository.snapshots() } },
+                    onCancel = { scope.launch { repository.cancel(transfer.id); transfers = repository.snapshots(historyOnly = historyOnly) } },
                     onRetry = { scope.launch {
                         when (val result = repository.retry(transfer.id)) {
                             is EnqueueResult.Added -> feedback = "Retry started · ${result.filename}"
                             is EnqueueResult.Rejected -> feedback = result.reason
                         }
-                        transfers = repository.snapshots()
+                        transfers = repository.snapshots(historyOnly = historyOnly)
                     } },
                     onOpen = { feedback = if (repository.open(transfer, context)) null else "No app could open this file, or it is no longer available." },
                     onShare = { feedback = if (repository.share(transfer, context)) null else "This file is no longer available to share." },
@@ -386,14 +481,51 @@ private fun TransferList(repository: DirectDownloadRepository, historyOnly: Bool
         AlertDialog(onDismissRequest = { pendingDelete = null },
             title = { Text("Delete downloaded file?") },
             text = { Text("${transfer.filename} will be removed from device storage and WAFF history.") },
-            confirmButton = { TextButton(onClick = { scope.launch { repository.cancel(transfer.id); pendingDelete = null; transfers = repository.snapshots() } }) { Text("Delete") } },
+            confirmButton = { TextButton(onClick = { scope.launch { repository.cancel(transfer.id); pendingDelete = null; transfers = repository.snapshots(historyOnly = historyOnly) } }) { Text("Delete") } },
             dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("Keep file") } },
             containerColor = androidx.compose.ui.graphics.Color(0xFF111111), titleContentColor = Paper, textContentColor = Muted)
+    }
+
+    pendingHistoryRemoval?.let { (ids, clearAll) ->
+        AlertDialog(onDismissRequest = { pendingHistoryRemoval = null },
+            title = { Text(if (clearAll) "Clear all history?" else "Remove selected history entries?") },
+            text = { Text("This removes ${ids.size} item(s) from WAFF history only. Downloaded files on your device will not be deleted.") },
+            confirmButton = { TextButton(onClick = { scope.launch {
+                repository.removeHistoryEntries(ids)
+                pendingHistoryRemoval = null
+                selectedHistoryIds = emptySet()
+                transfers = repository.snapshots(historyOnly = historyOnly)
+            } }) { Text("Remove from history") } },
+            dismissButton = { TextButton(onClick = { pendingHistoryRemoval = null }) { Text("Cancel") } },
+            containerColor = androidx.compose.ui.graphics.Color(0xFF111111), titleContentColor = Paper, textContentColor = Muted)
+    }
+    historyDetails?.let { transfer ->
+        val clipboard = LocalClipboardManager.current
+        ModalBottomSheet(onDismissRequest = { historyDetails = null },
+            containerColor = androidx.compose.ui.graphics.Color(0xFF0A0A0A), contentColor = Paper) {
+            Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 22.dp, vertical = 8.dp)) {
+                Text("Download details", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+                HistoryDetailRow("Title", transfer.title, clipboard)
+                HistoryDetailRow("Source", transfer.sourcePlatform, clipboard)
+                HistoryDetailRow("URL", transfer.sourceUrl, clipboard)
+                HistoryDetailRow("Hashtags", transfer.hashtags, clipboard)
+                HistoryDetailRow("Downloaded file", transfer.filename, clipboard)
+                HistoryDetailRow("File type", transfer.mimeType, clipboard)
+                HistoryDetailRow("Selected quality / format", transfer.formatLabel, clipboard)
+                val date = remember(transfer.createdAtMillis) {
+                    if (transfer.createdAtMillis > 0) java.text.DateFormat.getDateTimeInstance().format(java.util.Date(transfer.createdAtMillis)) else null
+                }
+                HistoryDetailRow("Queued", date, clipboard)
+                Spacer(Modifier.height(24.dp))
+            }
+        }
     }
 }
 
 @Composable
-private fun TransferRow(transfer: TransferSnapshot, onPause: () -> Unit, onResume: () -> Unit, onCancel: () -> Unit, onRetry: () -> Unit, onOpen: () -> Unit, onShare: () -> Unit, onDelete: () -> Unit) {
+private fun TransferRow(transfer: TransferSnapshot, historyOnly: Boolean, selected: Boolean,
+    onToggleSelect: (Boolean) -> Unit, onDetails: () -> Unit, onPause: () -> Unit, onResume: () -> Unit,
+    onCancel: () -> Unit, onRetry: () -> Unit, onOpen: () -> Unit, onShare: () -> Unit, onDelete: () -> Unit) {
     val status = when (transfer.status) {
         DownloadManager.STATUS_PENDING -> "Waiting"
         DownloadManager.STATUS_RUNNING -> "Downloading"
@@ -404,8 +536,9 @@ private fun TransferRow(transfer: TransferSnapshot, onPause: () -> Unit, onResum
     }
     Column(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(transfer.filename, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Medium)
+            if (historyOnly) Checkbox(selected, onToggleSelect)
+            Column(Modifier.weight(1f).clickable(enabled = historyOnly, onClick = onDetails)) {
+                Text(transfer.title?.takeIf { it.isNotBlank() } ?: transfer.filename, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Medium, maxLines = 2)
                 Text(status, style = MaterialTheme.typography.bodySmall, color = Muted)
             }
             if (transfer.status == DownloadManager.STATUS_SUCCESSFUL) {

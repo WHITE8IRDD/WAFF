@@ -5,6 +5,20 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.produceState
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.shape.RoundedCornerShape
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import java.io.ByteArrayOutputStream
+import java.net.HttpURLConnection
+import java.net.URL
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -27,10 +41,15 @@ internal fun ExtractedFormatsPanel(
     onSaveSubtitle: (ExtractedSubtitle) -> Unit,
     onSaveThumbnail: () -> Unit,
     alsoSaveThumbnail: Boolean,
-    onAlsoSaveThumbnail: (Boolean) -> Unit
+    onAlsoSaveThumbnail: (Boolean) -> Unit,
+    onDownloadSelected: (List<ExtractedFormat>) -> Unit
 ) {
     val clipboard = LocalClipboardManager.current
     var selectedSubtitleTags by remember(info.canonicalUrl) { mutableStateOf(emptySet<String>()) }
+    val carouselItems = remember(info.canonicalUrl, info.formats) { info.formats.filter { it.mediaIndex != null }.groupBy { it.mediaIndex!! }.toSortedMap() }
+    var selectedCarouselFormats by remember(info.canonicalUrl) {
+        mutableStateOf(carouselItems.mapNotNull { (index, formats) -> bestFormat(formats)?.let { index to it.id } }.toMap())
+    }
     Column(Modifier.fillMaxWidth().fillMaxHeight(.92f).verticalScroll(rememberScrollState()).padding(horizontal = 22.dp)) {
         Text("Choose quality", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
         Text(info.title, style = MaterialTheme.typography.titleMedium, color = Muted, maxLines = 2)
@@ -73,29 +92,70 @@ internal fun ExtractedFormatsPanel(
             else "Separate tracks cannot be safely merged here. Choose a combined stream.",
             color = Muted, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 8.dp)
         )
-        val videoFormats = info.formats.filter {
-            it.kind == ExtractedFormatKind.VIDEO_WITH_AUDIO || it.kind == ExtractedFormatKind.VIDEO_ONLY
-        }.sortedWith(compareByDescending<ExtractedFormat> { it.height ?: 0 }
-            .thenByDescending { it.width ?: 0 }.thenByDescending { it.bitrate ?: 0 })
-        if (videoFormats.isNotEmpty()) {
-            Text("Video quality", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 14.dp, bottom = 4.dp))
-            videoFormats.forEach { format ->
-                val videoOnly = format.kind == ExtractedFormatKind.VIDEO_ONLY
-                val detailsLabel = if (videoOnly) format.copy(label = "${format.label} · no audio") else format
-                FormatChoice(detailsLabel, if (videoOnly) selectedVideoId == format.id else selectedId == format.id,
-                    if (videoOnly) onSelectVideo else onSelect)
+        if (carouselItems.isNotEmpty()) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("Post media · ${carouselItems.size} item(s)", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Medium)
+                TextButton(onClick = {
+                    selectedCarouselFormats = if (selectedCarouselFormats.size == carouselItems.size) emptyMap()
+                        else carouselItems.mapNotNull { (index, formats) -> bestFormat(formats)?.let { index to it.id } }.toMap()
+                }) { Text(if (selectedCarouselFormats.size == carouselItems.size) "Deselect all" else "Select all") }
             }
-        }
-        val audioFormats = info.formats.filter { it.kind == ExtractedFormatKind.AUDIO }
-            .sortedByDescending { it.bitrate ?: 0 }
-        if (audioFormats.isNotEmpty()) {
-            Text("Audio", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 14.dp, bottom = 4.dp))
-            audioFormats.forEach { FormatChoice(it, selectedAudioId == it.id, onSelectAudio) }
-        }
-        val images = info.formats.filter { it.kind == ExtractedFormatKind.IMAGE }
-        if (images.isNotEmpty()) {
-            Text("Carousel images", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 14.dp, bottom = 4.dp))
-            images.forEach { FormatChoice(it, selectedId == it.id, onSelect) }
+            carouselItems.forEach { (index, formats) ->
+                val selectedFormat = formats.firstOrNull { it.id == selectedCarouselFormats[index] } ?: bestFormat(formats)
+                val isSelected = index in selectedCarouselFormats
+                val isImage = formats.any { it.kind == ExtractedFormatKind.IMAGE }
+                val kindText = if (isImage) "Image" else "Video"
+                Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(isSelected, { checked ->
+                        selectedCarouselFormats = if (checked) selectedCarouselFormats + (index to (selectedFormat?.id ?: return@Checkbox))
+                            else selectedCarouselFormats - index
+                    })
+                    RemoteImagePreview(formats.firstNotNullOfOrNull { it.previewUrl })
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("Item ${index + 1} · $kindText", style = MaterialTheme.typography.bodyMedium, color = Paper)
+                        if (!isImage && formats.size > 1) {
+                            var menuOpen by remember(index) { mutableStateOf(false) }
+                            TextButton(onClick = { menuOpen = true }, enabled = isSelected) {
+                                Text(selectedFormat?.let { qualityLabel(it) } ?: "Choose quality")
+                            }
+                            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                                formats.sortedWith(compareByDescending<ExtractedFormat> { it.height ?: 0 }.thenByDescending { it.bitrate ?: 0 }).forEach { option ->
+                                    DropdownMenuItem(text = { Text(qualityLabel(option)) }, onClick = {
+                                        selectedCarouselFormats = selectedCarouselFormats + (index to option.id)
+                                        menuOpen = false
+                                    })
+                                }
+                            }
+                        } else selectedFormat?.let { Text("${it.mimeType}${it.fileSizeBytes?.let { bytes -> " · ${formatBytes(bytes)}" }.orEmpty()}", style = MaterialTheme.typography.labelSmall, color = Muted) }
+                    }
+                }
+                HorizontalDivider(color = Line)
+            }
+        } else {
+            val videoFormats = info.formats.filter {
+                it.kind == ExtractedFormatKind.VIDEO_WITH_AUDIO || it.kind == ExtractedFormatKind.VIDEO_ONLY
+            }.sortedWith(compareByDescending<ExtractedFormat> { it.height ?: 0 }
+                .thenByDescending { it.width ?: 0 }.thenByDescending { it.bitrate ?: 0 })
+            if (videoFormats.isNotEmpty()) {
+                Text("Video quality", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 14.dp, bottom = 4.dp))
+                videoFormats.forEach { format ->
+                    val videoOnly = format.kind == ExtractedFormatKind.VIDEO_ONLY
+                    val detailsLabel = if (videoOnly) format.copy(label = "${format.label} · no audio") else format
+                    FormatChoice(detailsLabel, if (videoOnly) selectedVideoId == format.id else selectedId == format.id,
+                        if (videoOnly) onSelectVideo else onSelect)
+                }
+            }
+            val audioFormats = info.formats.filter { it.kind == ExtractedFormatKind.AUDIO }.sortedByDescending { it.bitrate ?: 0 }
+            if (audioFormats.isNotEmpty()) {
+                Text("Audio", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 14.dp, bottom = 4.dp))
+                audioFormats.forEach { FormatChoice(it, selectedAudioId == it.id, onSelectAudio) }
+            }
+            val images = info.formats.filter { it.kind == ExtractedFormatKind.IMAGE }
+            if (images.isNotEmpty()) {
+                Text("Images", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 14.dp, bottom = 4.dp))
+                images.forEach { FormatChoice(it, selectedId == it.id, onSelect) }
+            }
         }
         if (hasSeparatePair && mergeSupported) Button(onClick = onMerge,
             enabled = selectedVideoId != null && selectedAudioId != null,
@@ -103,9 +163,71 @@ internal fun ExtractedFormatsPanel(
             colors = ButtonDefaults.buttonColors(containerColor = Paper, contentColor = androidx.compose.ui.graphics.Color.Black)) {
             Text("Merge selected tracks")
         }
+        val chosenFormats = if (carouselItems.isNotEmpty()) {
+            selectedCarouselFormats.mapNotNull { (index, id) -> carouselItems[index]?.firstOrNull { it.id == id } }
+        } else listOfNotNull(
+            info.formats.firstOrNull { it.id == selectedId },
+            if (selectedId == null) info.formats.firstOrNull { it.id == selectedVideoId } else null,
+            if (selectedId == null && selectedVideoId == null) info.formats.firstOrNull { it.id == selectedAudioId } else null
+        )
+        Button(onClick = { onDownloadSelected(chosenFormats) }, enabled = chosenFormats.isNotEmpty(),
+            modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Paper, contentColor = androidx.compose.ui.graphics.Color.Black)) {
+            Text(if (carouselItems.isNotEmpty()) "Download selected (${chosenFormats.size})" else "Download selected format")
+        }
         Spacer(Modifier.height(24.dp))
     }
 }
+
+private fun bestFormat(formats: List<ExtractedFormat>): ExtractedFormat? {
+    val compare = compareBy<ExtractedFormat> { it.height ?: 0 }.thenBy { it.width ?: 0 }.thenBy { it.bitrate ?: 0 }
+    return formats.filter { it.kind == ExtractedFormatKind.VIDEO_WITH_AUDIO }.maxWithOrNull(compare)
+        ?: formats.filter { it.kind == ExtractedFormatKind.VIDEO_ONLY }.maxWithOrNull(compare)
+        ?: formats.filter { it.kind == ExtractedFormatKind.IMAGE }.maxWithOrNull(compare)
+}
+
+private fun qualityLabel(format: ExtractedFormat): String = listOfNotNull(
+    format.height?.let { "${it}p" }, format.codec, format.fileSizeBytes?.let(::formatBytes)
+).joinToString(" · ").ifBlank { format.label }
+
+private val previewSemaphore = Semaphore(3)
+
+@Composable
+internal fun RemoteImagePreview(url: String?) {
+    if (url.isNullOrBlank()) {
+        Surface(Modifier.size(72.dp), shape = RoundedCornerShape(8.dp), color = Line) { Box(contentAlignment = Alignment.Center) { Text("—", color = Muted) } }
+        return
+    }
+    val bitmap by produceState<Bitmap?>(initialValue = null, url) {
+        value = previewSemaphore.withPermit { withContext(Dispatchers.IO) { loadPreview(url) } }
+    }
+    if (bitmap != null) Image(bitmap!!.asImageBitmap(), contentDescription = "Media preview", modifier = Modifier.size(72.dp), contentScale = ContentScale.Crop)
+    else Surface(Modifier.size(72.dp), shape = RoundedCornerShape(8.dp), color = Line) { Box(contentAlignment = Alignment.Center) { Text("…", color = Muted) } }
+}
+
+private fun loadPreview(rawUrl: String): Bitmap? = runCatching {
+    val connection = (URL(rawUrl).openConnection() as HttpURLConnection).apply {
+        connectTimeout = 4000; readTimeout = 5000; instanceFollowRedirects = true
+    }
+    try {
+        if (connection.responseCode !in 200..299 || !connection.contentType.orEmpty().startsWith("image/")) return null
+        val bytes = ByteArrayOutputStream().use { out ->
+            connection.inputStream.use { input ->
+                val buffer = ByteArray(8192); var total = 0; var count: Int
+                while (input.read(buffer).also { count = it } >= 0) {
+                    total += count; if (total > 2 * 1024 * 1024) return null
+                    out.write(buffer, 0, count)
+                }
+            }
+            out.toByteArray()
+        }
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        var sample = 1
+        while (bounds.outWidth / sample > 512 || bounds.outHeight / sample > 512) sample *= 2
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
+    } finally { connection.disconnect() }
+}.getOrNull()
 
 @Composable
 private fun FormatChoice(format: ExtractedFormat, selected: Boolean, onSelect: (String) -> Unit) {

@@ -34,7 +34,13 @@ data class TransferSnapshot(
     val totalBytes: Long,
     val reason: Int,
     val localPath: String? = null,
-    val downloadUri: String? = null
+    val downloadUri: String? = null,
+    val title: String? = null,
+    val sourceUrl: String? = null,
+    val sourcePlatform: String? = null,
+    val hashtags: String? = null,
+    val formatLabel: String? = null,
+    val createdAtMillis: Long = 0L
 ) {
     val progressPercent: Int? get() = if (totalBytes > 0) ((bytesDownloaded * 100) / totalBytes).toInt().coerceIn(0, 100) else null
 }
@@ -88,7 +94,10 @@ class DirectDownloadRepository(context: Context) {
         url: String,
         title: String,
         expectedMime: String,
-        requestHeaders: Map<String, String> = emptyMap()
+        requestHeaders: Map<String, String> = emptyMap(),
+        sourcePageUrl: String? = null,
+        formatLabel: String? = null,
+        hashtags: List<String> = emptyList()
     ): EnqueueResult = withContext(Dispatchers.IO) {
         val uri = runCatching { Uri.parse(url) }.getOrNull()
             ?: return@withContext EnqueueResult.Rejected("The extractor returned an invalid media URL.")
@@ -100,27 +109,46 @@ class DirectDownloadRepository(context: Context) {
                 value.length <= 512 && '\r' !in value && '\n' !in value
         }
         val response = try {
-            val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-                requestMethod = "HEAD"
-                connectTimeout = 10_000
-                readTimeout = 10_000
-                instanceFollowRedirects = true
-                setRequestProperty("User-Agent", "WAFF Android")
-                safeHeaders.forEach { (name, value) -> setRequestProperty(name, value) }
-            }
-            try {
-                val code = connection.responseCode
-                if (code !in 200..299) return@withContext EnqueueResult.Rejected("The selected stream is unavailable (HTTP $code). Reopen the media details to refresh its link.")
-                DirectMediaRules.normalizedMime(connection.contentType).also { actual ->
-                    if (!DirectMediaRules.isMediaMime(actual) || actual.substringBefore('/') != expectedMime.substringBefore('/')) {
-                        return@withContext EnqueueResult.Rejected("The source response does not match the selected media type; nothing was queued.")
-                    }
+            inspectResolvedMime(url, safeHeaders).also { actual ->
+                if (!DirectMediaRules.isMediaMime(actual) || actual.substringBefore('/') != expectedMime.substringBefore('/')) {
+                    return@withContext EnqueueResult.Rejected("The source response does not match the selected media type; nothing was queued.")
                 }
-            } finally { connection.disconnect() }
-        } catch (_: Exception) {
-            return@withContext EnqueueResult.Rejected("Could not validate the selected media stream. Refresh the details and try again.")
+            }
+        } catch (error: Exception) {
+            return@withContext EnqueueResult.Rejected(error.message ?: "Could not validate the selected media stream. Refresh the details and try again.")
         }
-        enqueueVerified(url, title, response, requestHeaders = safeHeaders)
+        val originalPage = sourcePageUrl ?: url
+        val sourcePlatform = (UrlRouter.parse(originalPage) as? PlatformLink.Supported)?.platform?.label
+        enqueueVerified(url, title, response, requestHeaders = safeHeaders,
+            sourcePageUrl = originalPage, formatLabel = formatLabel,
+            hashtags = hashtags.joinToString(" ") { "#$it" }.takeIf { it.isNotBlank() },
+            sourcePlatform = sourcePlatform)
+    }
+
+    private fun inspectResolvedMime(url: String, headers: Map<String, String>): String {
+        fun probe(method: String): HttpURLConnection = (URL(url).openConnection() as HttpURLConnection).apply {
+            requestMethod = method
+            connectTimeout = 10_000
+            readTimeout = 10_000
+            instanceFollowRedirects = true
+            setRequestProperty("User-Agent", "WAFF Android")
+            headers.forEach { (name, value) -> setRequestProperty(name, value) }
+            if (method == "GET") setRequestProperty("Range", "bytes=0-0")
+        }
+        var connection = probe("HEAD")
+        var code = try { connection.responseCode } catch (error: Exception) { connection.disconnect(); throw error }
+        if (code !in 200..299) {
+            connection.disconnect()
+            connection = probe("GET")
+            code = try { connection.responseCode } catch (error: Exception) { connection.disconnect(); throw error }
+        }
+        try {
+            if (code !in 200..299) throw IllegalStateException("The selected stream is unavailable (HTTP $code). Refresh the media details and retry.")
+            return DirectMediaRules.normalizedMime(connection.contentType)
+        } finally {
+            runCatching { connection.inputStream.close() }
+            connection.disconnect()
+        }
     }
 
     suspend fun enqueueMerged(url: String, title: String, videoFormatId: String, audioFormatId: String): EnqueueResult = withContext(Dispatchers.IO) {
@@ -188,7 +216,11 @@ class DirectDownloadRepository(context: Context) {
         suggestedName: String,
         mime: String,
         extensionOverride: String? = null,
-        requestHeaders: Map<String, String> = emptyMap()
+        requestHeaders: Map<String, String> = emptyMap(),
+        sourcePageUrl: String? = null,
+        formatLabel: String? = null,
+        hashtags: String? = null,
+        sourcePlatform: String? = null
     ): EnqueueResult {
         val extension = MimeTypeMap.getSingleton().getExtensionFromMimeType(mime) ?: extensionOverride
         val candidate = FileNameRules.withMimeExtension(suggestedName, extension)
@@ -206,7 +238,9 @@ class DirectDownloadRepository(context: Context) {
             val downloadId = manager.enqueue(request)
             id = downloadId
             dao.insert(DownloadRecord(downloadId, filename, mime, System.currentTimeMillis(),
-                sourceUrl = url, status = DownloadManager.STATUS_PENDING, bytesDownloaded = 0L, totalBytes = -1L, reason = 0))
+                sourceUrl = url, status = DownloadManager.STATUS_PENDING, bytesDownloaded = 0L, totalBytes = -1L, reason = 0,
+                sourcePageUrl = sourcePageUrl ?: url, title = suggestedName, formatLabel = formatLabel,
+                hashtags = hashtags, sourcePlatform = sourcePlatform ?: (UrlRouter.parse(sourcePageUrl ?: url) as? PlatformLink.Supported)?.platform?.label))
             EnqueueResult.Added(downloadId, filename, mime)
         } catch (_: Exception) {
             id?.let { manager.remove(it) }
@@ -214,9 +248,9 @@ class DirectDownloadRepository(context: Context) {
         }
     }
 
-    suspend fun snapshots(): List<TransferSnapshot> = withContext(Dispatchers.IO) {
-        val records = dao.getAll()
-        val managed = managedDao.getAll()
+    suspend fun snapshots(historyOnly: Boolean = false): List<TransferSnapshot> = withContext(Dispatchers.IO) {
+        val records = if (historyOnly) dao.getAll() else dao.getActive()
+        val managed = if (historyOnly) managedDao.getAll() else managedDao.getActive()
         val byId = records.associateBy(DownloadRecord::id)
         val queriedIds = HashSet<Long>()
         val found = records.chunked(500).flatMap { batch ->
@@ -246,15 +280,30 @@ class DirectDownloadRepository(context: Context) {
             val total = record.totalBytes ?: -1L
             if (queryConfirmedMissing) dao.updateState(record.id, status, downloaded, total, reason, record.localUri)
             TransferSnapshot(record.id, record.filename, record.mimeType, status, downloaded, total, reason,
-                downloadUri = record.localUri)
+                downloadUri = record.localUri, title = record.title, sourceUrl = record.sourcePageUrl ?: record.sourceUrl,
+                sourcePlatform = record.sourcePlatform, hashtags = record.hashtags, formatLabel = record.formatLabel,
+                createdAtMillis = record.createdAtMillis)
         }
         val managedSnapshots = managed.map { record ->
             TransferSnapshot(record.id, record.filename, record.mimeType, record.status,
-                record.bytesDownloaded, record.totalBytes, record.reason, record.localPath)
+                record.bytesDownloaded, record.totalBytes, record.reason, record.localPath,
+                title = record.filename.substringBeforeLast('.'), sourceUrl = record.sourceUrl,
+                sourcePlatform = (UrlRouter.parse(record.sourceUrl) as? PlatformLink.Supported)?.platform?.label,
+                formatLabel = record.formatSelection, createdAtMillis = record.createdAtMillis)
         }
         val directSnapshots = found + retained
         (directSnapshots + managedSnapshots).sortedByDescending { snapshot ->
             byId[snapshot.id]?.createdAtMillis ?: managed.firstOrNull { it.id == snapshot.id }?.createdAtMillis ?: 0L
+        }
+    }
+
+    /** Removes WAFF history records only. Downloaded files and Android DownloadManager entries are untouched. */
+    suspend fun removeHistoryEntries(ids: Set<Long>) = withContext(Dispatchers.IO) {
+        ids.forEach { id ->
+            val direct = dao.getById(id)
+            if (direct?.status == DownloadManager.STATUS_SUCCESSFUL) dao.delete(id)
+            val managed = managedDao.getById(id)
+            if (managed?.status == DownloadManager.STATUS_SUCCESSFUL) managedDao.delete(id)
         }
     }
 
@@ -364,7 +413,10 @@ class DirectDownloadRepository(context: Context) {
         val localUri = getColumnIndex(DownloadManager.COLUMN_LOCAL_URI).takeIf { it >= 0 }?.let(::getString)
         return TransferSnapshot(record.id, record.filename, record.mimeType, int(DownloadManager.COLUMN_STATUS),
             long(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR), long(DownloadManager.COLUMN_TOTAL_SIZE_BYTES),
-            int(DownloadManager.COLUMN_REASON), downloadUri = localUri)
+            int(DownloadManager.COLUMN_REASON), downloadUri = localUri,
+            title = record.title, sourceUrl = record.sourcePageUrl ?: record.sourceUrl,
+            sourcePlatform = record.sourcePlatform, hashtags = record.hashtags,
+            formatLabel = record.formatLabel, createdAtMillis = record.createdAtMillis)
     }
 
 }

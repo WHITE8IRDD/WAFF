@@ -24,7 +24,12 @@ data class DownloadRecord(
     val bytesDownloaded: Long? = null,
     val totalBytes: Long? = null,
     val reason: Int? = null,
-    val localUri: String? = null
+    val localUri: String? = null,
+    val sourcePageUrl: String? = null,
+    val title: String? = null,
+    val formatLabel: String? = null,
+    val hashtags: String? = null,
+    val sourcePlatform: String? = null
 )
 
 const val MANAGED_TRANSFER_PAUSED_REASON = -1000
@@ -49,6 +54,9 @@ interface ManagedTransferDao {
     @Query("SELECT * FROM managed_transfers ORDER BY createdAtMillis DESC")
     suspend fun getAll(): List<ManagedTransferRecord>
 
+    @Query("SELECT * FROM managed_transfers WHERE status != 8 ORDER BY createdAtMillis DESC")
+    suspend fun getActive(): List<ManagedTransferRecord>
+
     @Query("SELECT * FROM managed_transfers WHERE id = :id LIMIT 1")
     suspend fun getById(id: Long): ManagedTransferRecord?
 
@@ -67,6 +75,9 @@ interface DownloadRecordDao {
     @Query("SELECT * FROM download_records ORDER BY createdAtMillis DESC")
     suspend fun getAll(): List<DownloadRecord>
 
+    @Query("SELECT * FROM download_records WHERE status IS NULL OR status != 8 ORDER BY createdAtMillis DESC")
+    suspend fun getActive(): List<DownloadRecord>
+
     @Query("SELECT * FROM download_records WHERE id = :id LIMIT 1")
     suspend fun getById(id: Long): DownloadRecord?
 
@@ -80,7 +91,7 @@ interface DownloadRecordDao {
     suspend fun delete(id: Long)
 }
 
-@Database(entities = [DownloadRecord::class, ManagedTransferRecord::class], version = 3, exportSchema = false)
+@Database(entities = [DownloadRecord::class, ManagedTransferRecord::class], version = 4, exportSchema = false)
 abstract class DownloadDatabase : RoomDatabase() {
     abstract fun downloadRecordDao(): DownloadRecordDao
     abstract fun managedTransferDao(): ManagedTransferDao
@@ -113,11 +124,20 @@ abstract class DownloadDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE download_records ADD COLUMN localUri TEXT")
             }
         }
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE download_records ADD COLUMN sourcePageUrl TEXT")
+                db.execSQL("ALTER TABLE download_records ADD COLUMN title TEXT")
+                db.execSQL("ALTER TABLE download_records ADD COLUMN formatLabel TEXT")
+                db.execSQL("ALTER TABLE download_records ADD COLUMN hashtags TEXT")
+                db.execSQL("ALTER TABLE download_records ADD COLUMN sourcePlatform TEXT")
+            }
+        }
         @Volatile private var instance: DownloadDatabase? = null
 
         fun get(context: Context): DownloadDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(context.applicationContext, DownloadDatabase::class.java, "waff-downloads.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .build().also { instance = it }
         }
     }

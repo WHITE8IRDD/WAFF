@@ -54,6 +54,11 @@ internal class YtDlpMediaExtractor(context: Context) {
             addOption("--no-warnings")
         }
         val response = YoutubeDL.execute(request, null, null)
+        if (response.exitCode != 0) {
+            val diagnostic = response.err.lineSequence().map(String::trim)
+                .lastOrNull { it.isNotBlank() }?.replace(Regex("https?://\\S+"), "[URL]")?.take(180)
+            throw IllegalStateException("Extractor exited with code ${response.exitCode}${diagnostic?.let { ": $it" }.orEmpty()}")
+        }
         val records = response.out.lineSequence().mapNotNull { line ->
             runCatching { JSONObject(line) }.getOrNull()
         }.flatMap { root ->
@@ -95,9 +100,11 @@ internal class YtDlpMediaExtractor(context: Context) {
         val ext = optString("ext", item.optString("ext")).lowercase()
         val vcodec = optString("vcodec", item.optString("vcodec"))
         val acodec = optString("acodec", item.optString("acodec"))
-        val image = ext in setOf("jpg", "jpeg", "png", "webp", "avif") && (vcodec.isBlank() || vcodec == "none")
-        val hasVideo = vcodec.isNotBlank() && vcodec != "none"
-        val hasAudio = acodec.isNotBlank() && acodec != "none"
+        val itemExt = item.optString("ext").lowercase()
+        val parentIsVideo = item.optString("vcodec").let { it.isNotBlank() && it != "none" } || itemExt in setOf("mp4", "m4v", "mov", "webm", "mkv")
+        val image = ext in setOf("jpg", "jpeg", "png", "webp", "avif") && !parentIsVideo
+        val hasVideo = (vcodec.isNotBlank() && vcodec != "none") || (!image && ext in setOf("mp4", "m4v", "mov", "webm", "mkv"))
+        val hasAudio = (acodec.isNotBlank() && acodec != "none") || ext in setOf("m4a", "mp3", "opus", "ogg", "aac")
         val kind = when {
             image -> ExtractedFormatKind.IMAGE
             hasVideo && hasAudio -> ExtractedFormatKind.VIDEO_WITH_AUDIO
@@ -124,6 +131,12 @@ internal class YtDlpMediaExtractor(context: Context) {
             ?: if (width != null && height != null) "${height}p" else "Item ${itemIndex + 1}"
         val rawHeaders = optJSONObject("http_headers") ?: item.optJSONObject("http_headers")
         val headers = rawHeaders?.let { obj -> obj.keys().asSequence().associateWith { obj.optString(it) } }.orEmpty()
+        val preview = item.optString("thumbnail").takeIf { it.startsWith("https://") }
+            ?: item.optJSONArray("thumbnails")?.let { thumbs ->
+                (0 until thumbs.length()).mapNotNull { thumbs.optJSONObject(it) }
+                    .maxByOrNull { it.optInt("width", 0) * it.optInt("height", 0) }
+                    ?.optString("url")?.takeIf { it.startsWith("https://") }
+            }
         val itemLabel = if (kind == ExtractedFormatKind.IMAGE) "Image" else "Video"
         return ExtractedFormat(
             id = "instagram-item-${itemIndex + 1}-${optString("format_id", ext).ifBlank { ext }}",
@@ -138,6 +151,8 @@ internal class YtDlpMediaExtractor(context: Context) {
             codec = listOf(vcodec.takeUnless { it.isBlank() || it == "none" }, acodec.takeUnless { it.isBlank() || it == "none" }).joinToString(" + ").takeIf { it.isNotBlank() },
             bitrate = (optDouble("tbr", 0.0) * 1000).toInt().takeIf { it > 0 },
             fileSizeBytes = optLong("filesize", 0L).takeIf { it > 0 } ?: optLong("filesize_approx", 0L).takeIf { it > 0 },
+            mediaIndex = itemIndex,
+            previewUrl = preview ?: if (kind == ExtractedFormatKind.IMAGE) streamUrl else null,
             headers = headers
         )
     }

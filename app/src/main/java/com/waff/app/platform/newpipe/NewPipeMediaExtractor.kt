@@ -34,6 +34,8 @@ internal data class ExtractedFormat(
     val bitrate: Int? = null,
     val language: String? = null,
     val fileSizeBytes: Long? = null,
+    val mediaIndex: Int? = null,
+    val previewUrl: String? = null,
     val headers: Map<String, String> = emptyMap()
 )
 
