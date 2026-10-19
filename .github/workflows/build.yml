@@ -70,3 +70,41 @@ jobs:
           path: app/build/outputs/apk/**/*.apk
           if-no-files-found: error
           retention-days: 14
+
+  publish-preview-apks:
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'arena/b260b5f3-waff' && github.event.pull_request.head.repo.full_name == github.repository
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: waff-apks
+          path: release-apks
+      - name: Publish installable preview APKs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_SHA: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="v0.1.0-preview.2"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Preview release $tag already exists; leaving its assets unchanged."
+            exit 0
+          fi
+          debug_apk="$(find release-apks -type f -path '*/debug/*.apk' | head -n 1)"
+          unsigned_apk="$(find release-apks -type f -path '*/release/*.apk' | head -n 1)"
+          test -n "$debug_apk" && test -n "$unsigned_apk"
+          mkdir -p release-assets
+          cp "$debug_apk" release-assets/WAFF-${tag}-debug.apk
+          cp "$unsigned_apk" release-assets/WAFF-${tag}-release-unsigned.apk
+          (cd release-assets && sha256sum *.apk > SHA256SUMS.txt)
+          gh release create "$tag" release-assets/*.apk release-assets/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$TARGET_SHA" \
+            --title "WAFF $tag — early preview" \
+            --prerelease \
+            --notes "Test-only preview APKs for WAFF. This is not a finished or stable app. Direct media downloads, extraction adapters, persistent transfer management, and background audio/video merge are in development; service support and merge playback have not been fully verified on-device. The debug APK is signed with a temporary CI key for evaluation. The release APK is unsigned and requires signing before installation."
