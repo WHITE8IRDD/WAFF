@@ -5,7 +5,10 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -30,7 +33,12 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.waff.app.core.DirectDownloadRepository
 import com.waff.app.core.EnqueueResult
+import com.waff.app.core.PlatformLink
+import com.waff.app.core.UrlRouter
 import com.waff.app.core.TransferSnapshot
+import com.waff.app.platform.youtube.YouTubeMediaInfo
+import com.waff.app.platform.youtube.YouTubeMetadataExtractor
+import com.waff.app.platform.youtube.YouTubeFormatPolicy
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -114,12 +122,15 @@ private fun HomeScreen(
     val clipboard = LocalClipboardManager.current
     val focus = LocalFocusManager.current
     val scope = rememberCoroutineScope()
+    val youtubeExtractor = remember { YouTubeMetadataExtractor() }
+    var youtubeInfo by remember { mutableStateOf<YouTubeMediaInfo?>(null) }
+    var selectedFormatId by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     Column(modifier.fillMaxSize().padding(horizontal = 24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         Spacer(Modifier.height(24.dp))
         Text("Save media.\nKeep it yours.", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Medium, lineHeight = 38.sp)
-        Text("Download a direct image, audio, or video file.", style = MaterialTheme.typography.bodyMedium, color = Muted)
-        OutlinedTextField(value = link, onValueChange = { onLinkChange(it); setFeedback(null) }, modifier = Modifier.fillMaxWidth(),
+        Text("Paste a supported video link or a direct media-file URL.", style = MaterialTheme.typography.bodyMedium, color = Muted)
+        OutlinedTextField(value = link, onValueChange = { onLinkChange(it); setFeedback(null); youtubeInfo = null; selectedFormatId = null }, modifier = Modifier.fillMaxWidth(),
             placeholder = { Text("Paste a direct media link", color = Muted) }, leadingIcon = { Icon(Icons.Outlined.Link, null) },
             singleLine = true, shape = RoundedCornerShape(12.dp), keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
             keyboardActions = KeyboardActions(onGo = { focus.moveFocus(FocusDirection.Down) }),
@@ -127,32 +138,54 @@ private fun HomeScreen(
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedButton(onClick = {
                 val clip = clipboard.getText()?.text
-                if (!clip.isNullOrBlank()) { onLinkChange(clip.trim()); setFeedback("Link pasted") } else setFeedback("Clipboard is empty")
+                if (!clip.isNullOrBlank()) { onLinkChange(clip.trim()); youtubeInfo = null; selectedFormatId = null; setFeedback("Link pasted") } else setFeedback("Clipboard is empty")
             }, shape = RoundedCornerShape(10.dp)) {
                 Icon(Icons.Outlined.ContentPaste, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Paste")
             }
+            val youtube = (UrlRouter.parse(link) as? PlatformLink.Supported)?.takeIf { it.platform == com.waff.app.core.Platform.YOUTUBE }
             Button(onClick = {
                 focus.clearFocus()
                 busy = true
                 scope.launch {
-                    when (val result = repository.enqueue(link)) {
-                        is EnqueueResult.Added -> { setFeedback("Download started · ${result.filename}"); onQueued() }
-                        is EnqueueResult.Rejected -> setFeedback(result.reason)
-                    }
-                    busy = false
+                    try {
+                        val info = youtubeInfo
+                        if (youtube != null && info == null) {
+                            val extracted = youtubeExtractor.extract(youtube.canonicalUrl)
+                            youtubeInfo = extracted
+                            selectedFormatId = YouTubeFormatPolicy.defaultFormat(extracted)?.id
+                            setFeedback(if (extracted.formats.isEmpty()) "No downloadable formats were returned for this video." else null)
+                        } else if (info != null) {
+                            val format = info.formats.firstOrNull { it.id == selectedFormatId }
+                            if (format == null) setFeedback("Select one of the formats returned by the extractor.")
+                            else when (val result = repository.enqueueResolvedMedia(format.url, info.title, format.mimeType)) {
+                                is EnqueueResult.Added -> { setFeedback("Download started · ${result.filename}"); onQueued() }
+                                is EnqueueResult.Rejected -> setFeedback(result.reason)
+                            }
+                        } else {
+                            when (val result = repository.enqueue(link)) {
+                                is EnqueueResult.Added -> { setFeedback("Download started · ${result.filename}"); onQueued() }
+                                is EnqueueResult.Rejected -> setFeedback(result.reason)
+                            }
+                        }
+                    } catch (_: java.io.IOException) {
+                        setFeedback("Network request failed. Check your connection and try again.")
+                    } catch (_: Exception) {
+                        setFeedback("YouTube could not provide media details. The video may be unavailable, restricted, or require access this extractor cannot provide.")
+                    } finally { busy = false }
                 }
-            }, enabled = link.isNotBlank() && !busy, shape = RoundedCornerShape(10.dp),
+            }, enabled = link.isNotBlank() && !busy && (youtubeInfo == null || selectedFormatId != null), shape = RoundedCornerShape(10.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Paper, contentColor = Ink)) {
                 if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = Ink)
-                else Text("Download", fontWeight = FontWeight.SemiBold)
+                else Text(if (youtube != null && youtubeInfo == null) "Get formats" else if (youtubeInfo != null) "Download selected" else "Download", fontWeight = FontWeight.SemiBold)
                 if (!busy) { Spacer(Modifier.width(8.dp)); Icon(Icons.Outlined.ArrowDownward, null, Modifier.size(18.dp)) }
             }
         }
+        youtubeInfo?.let { info -> YouTubeFormatsPanel(info, selectedFormatId, { selectedFormatId = it }) }
         if (feedback != null) Text(feedback, color = Muted, style = MaterialTheme.typography.bodySmall)
         Spacer(Modifier.weight(1f))
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Icon(Icons.Outlined.VerifiedUser, null, tint = Muted, modifier = Modifier.size(18.dp))
-            Text("Direct files only. No account or cookies required.", color = Muted, style = MaterialTheme.typography.labelMedium)
+            Text("No WAFF account required. Links go directly to their source.", color = Muted, style = MaterialTheme.typography.labelMedium)
         }
         Spacer(Modifier.height(18.dp))
     }

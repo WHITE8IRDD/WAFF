@@ -65,15 +65,49 @@ class DirectDownloadRepository(context: Context) {
         } catch (_: Exception) {
             return@withContext EnqueueResult.Rejected("Could not inspect that link. Check your connection and try again.")
         }
-        val mimeExtension = MimeTypeMap.getSingleton().getExtensionFromMimeType(mime)
-        val candidateName = FileNameRules.withMimeExtension(uri.lastPathSegment.orEmpty(), mimeExtension)
-        val filename = uniqueFilename(candidateName)
+        enqueueVerified(url, uri.lastPathSegment.orEmpty(), mime)
+    }
+
+    suspend fun enqueueResolvedMedia(url: String, title: String, expectedMime: String): EnqueueResult = withContext(Dispatchers.IO) {
+        val uri = runCatching { Uri.parse(url) }.getOrNull()
+            ?: return@withContext EnqueueResult.Rejected("The extractor returned an invalid media URL.")
+        if (uri.scheme != "https" || uri.host.isNullOrBlank() || uri.userInfo != null) {
+            return@withContext EnqueueResult.Rejected("The extracted stream URL is not a safe HTTPS address.")
+        }
+        val response = try {
+            val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+                requestMethod = "HEAD"
+                connectTimeout = 10_000
+                readTimeout = 10_000
+                instanceFollowRedirects = true
+                setRequestProperty("User-Agent", "WAFF Android")
+            }
+            try {
+                val code = connection.responseCode
+                if (code !in 200..299) return@withContext EnqueueResult.Rejected("The selected stream is unavailable (HTTP $code). Reopen the media details to refresh its link.")
+                DirectMediaRules.normalizedMime(connection.contentType).also { actual ->
+                    if (!DirectMediaRules.isMediaMime(actual) || actual.substringBefore('/') != expectedMime.substringBefore('/')) {
+                        return@withContext EnqueueResult.Rejected("The source response does not match the selected media type; nothing was queued.")
+                    }
+                }
+            } finally { connection.disconnect() }
+        } catch (_: Exception) {
+            return@withContext EnqueueResult.Rejected("Could not validate the selected media stream. Refresh the details and try again.")
+        }
+        enqueueVerified(url, title, response)
+    }
+
+    private suspend fun enqueueVerified(url: String, suggestedName: String, mime: String): EnqueueResult {
+        val extension = MimeTypeMap.getSingleton().getExtensionFromMimeType(mime)
+        val candidate = FileNameRules.withMimeExtension(suggestedName, extension)
+        val filename = uniqueFilename(candidate)
         var id: Long? = null
         try {
             val request = DownloadManager.Request(Uri.parse(url))
                 .setTitle(filename)
                 .setDescription("WAFF · direct media")
                 .setMimeType(mime)
+                .addRequestHeader("User-Agent", "WAFF Android")
                 .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
                 .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "WAFF/$filename")
             val downloadId = manager.enqueue(request)

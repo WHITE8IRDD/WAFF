@@ -1,6 +1,6 @@
 # WAFF
 
-WAFF is an Android media-downloader project in active development. The current app can download publicly reachable direct HTTPS image, audio, and video files through Android's DownloadManager after checking the response MIME type. **It does not extract media from platform pages (including YouTube, Instagram, TikTok, or Facebook).** This is an early milestone, not a stable release.
+WAFF is an Android media-downloader project in active development. The app can download publicly reachable direct HTTPS image, audio, and video files through Android's DownloadManager after checking the response MIME type. It also has an experimental YouTube link flow powered by NewPipe Extractor: it retrieves metadata, lists formats returned by the extractor, and queues the selected stream URL. This is an early milestone, not a stable release; YouTube availability varies, and protected, restricted, or rate-limited videos may not work.
 
 [![Android CI](https://github.com/WHITE8IRDD/WAFF/actions/workflows/build.yml/badge.svg)](https://github.com/WHITE8IRDD/WAFF/actions/workflows/build.yml) · [GitHub Releases](https://github.com/WHITE8IRDD/WAFF/releases)
 
@@ -14,9 +14,9 @@ WAFF is an Android media-downloader project in active development. The current a
 - [x] History search, open/share actions, and confirmed removal of completed downloads
 - [x] URL, hostname, MIME, filename-safety, and filter-preserving media-selection unit tests
 - [x] Room transfer metadata implementation
-- [ ] Room DAO emulator integration test (workflow added; awaiting pass)
-- [ ] Media picker UI and platform extractor wiring
-- [ ] Platform-page extraction and format selection
+- [ ] Room DAO emulator integration test (wired into CI; current emulator verification is pending)
+- [x] YouTube metadata and format-selection UI wired to NewPipe Extractor (experimental; build verification pending)
+- [ ] Instagram, TikTok, and Facebook extraction; YouTube video/audio stream merging, subtitle saving/embedding, thumbnail export, and full regression matrix
 - [x] Room-persisted transfer metadata joined to DownloadManager status and completed-file actions
 - [ ] User-selected storage, explicit pause/resume, verified post-transfer content checks, and storage migrations
 - [x] Embedded WebView browsing with DownloadListener-based direct-file offers
@@ -24,11 +24,11 @@ WAFF is an Android media-downloader project in active development. The current a
 - [ ] Device review, product-wide accessibility/performance review, and stable release
 - [x] Preview APK build/release automation (unsigned release variant; debug build included for evaluation)
 
-The Browser tab uses Android WebView for ordinary browsing and offers a Download action only when WebView reports a downloadable image/audio/video MIME type. It does not inspect protected page internals or extract platform posts. The direct-file workflow requires an HTTPS server that supports HEAD and returns an image/audio/video MIME type; ambiguous responses are rejected rather than saved as media. Transfers are managed by Android DownloadManager, so pause/resume behavior and notifications depend on Android and the device.
+The Browser tab uses Android WebView for ordinary browsing and offers a Download action only when WebView reports a downloadable image/audio/video MIME type. It does not inspect protected page internals. The direct-file workflow requires an HTTPS server that supports HEAD and returns an image/audio/video MIME type; ambiguous responses are rejected rather than saved as media. The experimental YouTube path uses NewPipe Extractor to present streams it can resolve; it does not merge separate audio/video streams, and video-only choices are explicitly identified. Transfers are managed by Android DownloadManager, so pause/resume behavior and notifications depend on Android and the device.
 
 ## Architecture
 
-URL routing, MIME classification, filename rules, and selection-preservation behavior are independently tested. Room persists WAFF transfer metadata while Android DownloadManager remains authoritative for transfer state and file URIs. The shared selection model is not yet wired to a platform media picker; platform extractors are not integrated. No ad/analytics SDKs or developer telemetry are included.
+URL routing, MIME classification, filename rules, and selection-preservation behavior are independently tested. Room persists WAFF transfer metadata while Android DownloadManager remains authoritative for transfer state and file URIs. NewPipe Extractor performs experimental YouTube metadata/stream resolution; stream compatibility and access remain dependent on the source service. No ad/analytics SDKs or developer telemetry are included.
 
 ## Build
 
@@ -47,4 +47,4 @@ The app requests Internet access for link preflight and transfers. It does not r
 
 ## Licensing
 
-The application source is MIT-licensed. Third-party dependencies and future extraction engines will be reviewed and documented before integration; platform terms and access restrictions remain applicable. WAFF is not affiliated with YouTube, Instagram, TikTok, or Facebook.
+WAFF is distributed under GNU GPL version 3 or later; see `LICENSE`. NewPipe Extractor is a GPL-3.0-or-later dependency and is documented in `THIRD_PARTY_NOTICES.md`. Platform terms and access restrictions remain applicable. WAFF is not affiliated with YouTube, Instagram, TikTok, or Facebook.
