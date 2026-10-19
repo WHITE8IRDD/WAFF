@@ -14,6 +14,7 @@ import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLRequest
 import com.waff.app.core.DownloadDatabase
 import com.waff.app.core.ManagedTransferRecord
+import com.waff.app.core.MANAGED_TRANSFER_PAUSED_REASON
 import android.app.DownloadManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -51,11 +52,14 @@ internal class MergedDownloadWorker(context: Context, params: WorkerParameters) 
             dao.updateProgress(transferId, DownloadManager.STATUS_SUCCESSFUL, output.length(), output.length(), 0)
             Result.success()
         } catch (_: CancellationException) {
-            val paused = isStopped
-            if (!paused) cleanupPartial(record)
+            val pauseRequested = dao.getById(transferId)?.let {
+                it.status == DownloadManager.STATUS_PAUSED && it.reason == MANAGED_TRANSFER_PAUSED_REASON
+            } == true
+            if (!pauseRequested) cleanupPartial(record)
             dao.updateProgress(transferId,
-                if (paused) DownloadManager.STATUS_PAUSED else DownloadManager.STATUS_FAILED,
-                record.bytesDownloaded, record.totalBytes, if (paused) 0 else DownloadManager.ERROR_UNKNOWN)
+                if (pauseRequested) DownloadManager.STATUS_PAUSED else DownloadManager.STATUS_FAILED,
+                record.bytesDownloaded, record.totalBytes,
+                if (pauseRequested) MANAGED_TRANSFER_PAUSED_REASON else DownloadManager.ERROR_UNKNOWN)
             Result.failure()
         } catch (_: Exception) {
             cleanupPartial(record)

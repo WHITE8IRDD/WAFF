@@ -237,8 +237,9 @@ class DirectDownloadRepository(context: Context) {
 
     suspend fun pause(id: Long) = withContext(Dispatchers.IO) {
         val record = managedDao.getById(id) ?: return@withContext
+        if (record.status !in setOf(DownloadManager.STATUS_PENDING, DownloadManager.STATUS_RUNNING)) return@withContext
+        managedDao.updateProgress(id, DownloadManager.STATUS_PAUSED, record.bytesDownloaded, record.totalBytes, MANAGED_TRANSFER_PAUSED_REASON)
         WorkManager.getInstance(app).cancelUniqueWork("waff-merged-$id")
-        managedDao.updateProgress(id, DownloadManager.STATUS_PAUSED, record.bytesDownloaded, record.totalBytes, 0)
     }
 
     suspend fun resume(id: Long): Boolean = withContext(Dispatchers.IO) {

@@ -40,6 +40,8 @@ class DownloadRecordDaoTest {
         managed.updateProgress(record.id, android.app.DownloadManager.STATUS_RUNNING, 50L, 100L, 0)
         assertEquals(50L, managed.getById(record.id)?.bytesDownloaded)
         assertEquals(android.app.DownloadManager.STATUS_RUNNING, managed.getById(record.id)?.status)
+        managed.updateProgress(record.id, android.app.DownloadManager.STATUS_PAUSED, 50L, 100L, MANAGED_TRANSFER_PAUSED_REASON)
+        assertEquals(MANAGED_TRANSFER_PAUSED_REASON, managed.getById(record.id)?.reason)
         managed.delete(record.id)
         assertEquals(null, managed.getById(record.id))
     }

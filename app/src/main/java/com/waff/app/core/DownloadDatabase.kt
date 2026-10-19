@@ -21,6 +21,8 @@ data class DownloadRecord(
     val createdAtMillis: Long
 )
 
+const val MANAGED_TRANSFER_PAUSED_REASON = -1000
+
 @Entity(tableName = "managed_transfers")
 data class ManagedTransferRecord(
     @PrimaryKey val id: Long,
