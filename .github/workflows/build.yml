@@ -54,7 +54,7 @@ jobs:
             exit 1
           fi
       - name: Room integration test on Android emulator
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request'
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
