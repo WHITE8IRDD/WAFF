@@ -76,7 +76,8 @@ internal fun ExtractedFormatsPanel(
         listOf(
             ExtractedFormatKind.VIDEO_WITH_AUDIO to "Video · with audio",
             ExtractedFormatKind.VIDEO_ONLY to "Video · no audio",
-            ExtractedFormatKind.AUDIO to "Audio"
+            ExtractedFormatKind.AUDIO to "Audio",
+            ExtractedFormatKind.IMAGE to "Carousel images"
         ).forEach { (kind, title) ->
             val formats = info.formats.filter { it.kind == kind }
                 .sortedWith(compareByDescending<ExtractedFormat> { it.height ?: 0 }

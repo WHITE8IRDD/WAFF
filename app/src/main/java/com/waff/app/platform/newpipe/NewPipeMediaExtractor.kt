@@ -18,7 +18,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.zip.GZIPInputStream
 import java.util.zip.InflaterInputStream
 
-internal enum class ExtractedFormatKind { VIDEO_WITH_AUDIO, VIDEO_ONLY, AUDIO }
+internal enum class ExtractedFormatKind { VIDEO_WITH_AUDIO, VIDEO_ONLY, AUDIO, IMAGE }
 
 internal data class ExtractedFormat(
     val id: String,

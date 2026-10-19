@@ -165,6 +165,7 @@ private fun HomeScreen(
         PlatformLink.Invalid -> null
     }
     val newPipeCanExtract = extractorUrl?.let(mediaExtractor::supportsUrl) == true
+    val isInstagram = (parsedLink as? PlatformLink.Supported)?.platform == Platform.INSTAGRAM
     val socialNeedsFallback = (parsedLink as? PlatformLink.Supported)?.platform?.let { it in setOf(Platform.INSTAGRAM, Platform.TIKTOK, Platform.FACEBOOK) } == true
     val canExtract = newPipeCanExtract || socialNeedsFallback
     LaunchedEffect(quickSaveRequested) {
@@ -172,7 +173,8 @@ private fun HomeScreen(
         busy = true
         try {
             if (canExtract) {
-                val info = if (socialNeedsFallback) ytDlpExtractor.extract(extractorUrl.orEmpty())
+                val info = if (isInstagram) ytDlpExtractor.extractInstagram(extractorUrl.orEmpty())
+                    else if (socialNeedsFallback) ytDlpExtractor.extract(extractorUrl.orEmpty())
                     else mediaExtractor.extract(extractorUrl.orEmpty())
                 val format = MediaFormatPolicy.defaultFormat(info)
                 if (format == null) {
@@ -217,7 +219,8 @@ private fun HomeScreen(
                     try {
                         val info = mediaInfo
                         if (canExtract && info == null) {
-                            val extracted = if (socialNeedsFallback) ytDlpExtractor.extract(extractorUrl.orEmpty())
+                            val extracted = if (isInstagram) ytDlpExtractor.extractInstagram(extractorUrl.orEmpty())
+                                else if (socialNeedsFallback) ytDlpExtractor.extract(extractorUrl.orEmpty())
                                 else mediaExtractor.extract(extractorUrl.orEmpty())
                             mediaInfo = extracted
                             showFormatsSheet = true
