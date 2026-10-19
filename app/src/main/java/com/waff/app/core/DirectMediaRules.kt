@@ -10,6 +10,10 @@ object DirectMediaRules {
         return mime.startsWith("video/") || mime.startsWith("audio/") || mime.startsWith("image/")
     }
 
+    fun isSubtitleMime(value: String?): Boolean = normalizedMime(value) in setOf(
+        "text/vtt", "text/plain", "application/ttml+xml", "application/x-subrip", "text/xml", "application/xml"
+    )
+
     /** Use known response MIME information rather than a possibly misleading URL suffix. */
     fun extensionForMime(value: String?): String? = when (normalizedMime(value)) {
         "image/jpeg", "image/jpg" -> "jpg"
@@ -26,6 +30,9 @@ object DirectMediaRules {
         "audio/ogg", "application/ogg" -> "ogg"
         "audio/wav", "audio/x-wav" -> "wav"
         "audio/flac" -> "flac"
+        "text/vtt" -> "vtt"
+        "application/ttml+xml" -> "ttml"
+        "application/x-subrip" -> "srt"
         else -> null
     }
 }

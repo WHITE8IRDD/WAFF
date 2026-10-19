@@ -97,8 +97,36 @@ class DirectDownloadRepository(context: Context) {
         enqueueVerified(url, title, response)
     }
 
-    private suspend fun enqueueVerified(url: String, suggestedName: String, mime: String): EnqueueResult {
-        val extension = MimeTypeMap.getSingleton().getExtensionFromMimeType(mime)
+    suspend fun enqueueResolvedSubtitle(url: String, title: String, language: String, extension: String): EnqueueResult = withContext(Dispatchers.IO) {
+        val uri = runCatching { Uri.parse(url) }.getOrNull()
+            ?: return@withContext EnqueueResult.Rejected("The extractor returned an invalid subtitle URL.")
+        if (uri.scheme != "https" || uri.host.isNullOrBlank() || uri.userInfo != null) {
+            return@withContext EnqueueResult.Rejected("The extracted subtitle URL is not a safe HTTPS address.")
+        }
+        val mime = try {
+            val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+                requestMethod = "HEAD"
+                connectTimeout = 10_000
+                readTimeout = 10_000
+                instanceFollowRedirects = true
+                setRequestProperty("User-Agent", "WAFF Android")
+            }
+            try {
+                val code = connection.responseCode
+                if (code !in 200..299) return@withContext EnqueueResult.Rejected("The subtitle is unavailable (HTTP $code). Refresh the video details and try again.")
+                DirectMediaRules.normalizedMime(connection.contentType).also { actual ->
+                    if (!DirectMediaRules.isSubtitleMime(actual)) return@withContext EnqueueResult.Rejected("The source did not return a recognized subtitle file; nothing was queued.")
+                }
+            } finally { connection.disconnect() }
+        } catch (_: Exception) {
+            return@withContext EnqueueResult.Rejected("Could not validate the subtitle. Refresh the details and try again.")
+        }
+        val safeLanguage = language.replace(Regex("[^A-Za-z0-9_-]"), "_").take(24).ifBlank { "und" }
+        enqueueVerified(url, "$title $safeLanguage", mime, extension)
+    }
+
+    private suspend fun enqueueVerified(url: String, suggestedName: String, mime: String, extensionOverride: String? = null): EnqueueResult {
+        val extension = MimeTypeMap.getSingleton().getExtensionFromMimeType(mime) ?: extensionOverride
         val candidate = FileNameRules.withMimeExtension(suggestedName, extension)
         val filename = uniqueFilename(candidate)
         var id: Long? = null

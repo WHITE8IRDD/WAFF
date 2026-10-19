@@ -15,6 +15,16 @@ class DirectMediaRulesTest {
         }
     }
 
+    @Test fun subtitleMimeTypesAreExplicitlyAllowlisted() {
+        listOf("text/vtt", "application/ttml+xml", "text/plain; charset=utf-8").forEach {
+            assertTrue("Expected subtitle MIME: $it", DirectMediaRules.isSubtitleMime(it))
+        }
+        listOf(null, "text/html", "application/json", "video/mp4").forEach {
+            assertFalse("Unexpected subtitle MIME: $it", DirectMediaRules.isSubtitleMime(it))
+        }
+        assertEquals("vtt", DirectMediaRules.extensionForMime("text/vtt"))
+    }
+
     @Test fun normalizesMimeAndUsesReliableExtensions() {
         assertEquals("image/jpeg", DirectMediaRules.normalizedMime(" Image/JPEG; q=1 "))
         assertEquals("mp4", DirectMediaRules.extensionForMime("video/mp4"))

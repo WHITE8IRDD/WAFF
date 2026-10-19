@@ -180,7 +180,34 @@ private fun HomeScreen(
                 if (!busy) { Spacer(Modifier.width(8.dp)); Icon(Icons.Outlined.ArrowDownward, null, Modifier.size(18.dp)) }
             }
         }
-        youtubeInfo?.let { info -> YouTubeFormatsPanel(info, selectedFormatId, { selectedFormatId = it }) }
+        youtubeInfo?.let { info ->
+            YouTubeFormatsPanel(info, selectedFormatId, { selectedFormatId = it },
+                onSaveSubtitle = { subtitle ->
+                    scope.launch {
+                        if (busy) return@launch
+                        busy = true
+                        try {
+                            when (val result = repository.enqueueResolvedSubtitle(subtitle.url, info.title, subtitle.languageTag, subtitle.extension)) {
+                                is EnqueueResult.Added -> { setFeedback("Subtitle queued · ${result.filename}"); onQueued() }
+                                is EnqueueResult.Rejected -> setFeedback(result.reason)
+                            }
+                        } finally { busy = false }
+                    }
+                },
+                onSaveThumbnail = {
+                    scope.launch {
+                        if (busy) return@launch
+                        busy = true
+                        try {
+                            val imageUrl = info.thumbnailUrl.orEmpty()
+                            when (val result = repository.enqueueResolvedMedia(imageUrl, "${info.title} thumbnail", "image/*")) {
+                                is EnqueueResult.Added -> { setFeedback("Thumbnail queued · ${result.filename}"); onQueued() }
+                                is EnqueueResult.Rejected -> setFeedback(result.reason)
+                            }
+                        } finally { busy = false }
+                    }
+                })
+        }
         if (feedback != null) Text(feedback, color = Muted, style = MaterialTheme.typography.bodySmall)
         Spacer(Modifier.weight(1f))
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
