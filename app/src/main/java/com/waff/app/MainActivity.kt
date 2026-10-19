@@ -113,7 +113,7 @@ private fun WaffApp(sharedText: String, intentVersion: Int) {
                 "Browser" -> BrowserScreen(repository, { selected = "Queue" }, Modifier.padding(padding))
                 "Queue" -> TransferList(repository, historyOnly = false, Modifier.padding(padding))
                 "History" -> TransferList(repository, historyOnly = true, Modifier.padding(padding))
-                "Settings" -> SimpleScreen("Settings", "No configurable download preferences are available yet.", Modifier.padding(padding))
+                "Settings" -> SettingsScreen(Modifier.padding(padding))
                 else -> SimpleScreen("Browser", "An embedded browser is not available yet. Share a direct media-file link to WAFF to download it.", Modifier.padding(padding))
             }
         }
@@ -386,6 +386,57 @@ private fun formatBytes(bytes: Long): String = when {
     bytes < 1024 * 1024 -> "%.1f KB".format(bytes / 1024.0)
     bytes < 1024L * 1024 * 1024 -> "%.1f MB".format(bytes / (1024.0 * 1024))
     else -> "%.2f GB".format(bytes / (1024.0 * 1024 * 1024))
+}
+
+@Composable
+private fun SettingsScreen(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    var confirmClear by remember { mutableStateOf(false) }
+    var feedback by remember { mutableStateOf<String?>(null) }
+    val appVersion = remember {
+        runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "Unknown"
+    }
+    Column(modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Text("Settings", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Medium)
+        HorizontalDivider(color = Line)
+        Text("Privacy", style = MaterialTheme.typography.titleMedium)
+        Text("WAFF Browser stores site data in Android WebView. Clear saved cookies, cached files, and form data from this device.",
+            style = MaterialTheme.typography.bodySmall, color = Muted)
+        OutlinedButton(onClick = { confirmClear = true }) {
+            Icon(Icons.Outlined.DeleteOutline, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text("Clear browser data")
+        }
+        if (feedback != null) Text(feedback.orEmpty(), style = MaterialTheme.typography.bodySmall, color = Muted)
+        Spacer(Modifier.height(8.dp))
+        Text("About", style = MaterialTheme.typography.titleMedium)
+        Text("WAFF · version $appVersion", style = MaterialTheme.typography.bodySmall, color = Muted)
+        Text("Downloads are processed on this device. WAFF has no account, ad SDK, or analytics SDK.",
+            style = MaterialTheme.typography.bodySmall, color = Muted)
+    }
+    if (confirmClear) AlertDialog(
+        onDismissRequest = { confirmClear = false },
+        title = { Text("Clear browser data?") },
+        text = { Text("This removes cached pages, cookies, and saved form data for WAFF Browser on this device.") },
+        confirmButton = {
+            TextButton(onClick = {
+                confirmClear = false
+                runCatching {
+                    android.webkit.WebStorage.getInstance().deleteAllData()
+                    android.webkit.CookieManager.getInstance().removeAllCookies { }
+                    android.webkit.WebView(context).apply {
+                        clearCache(true)
+                        clearHistory()
+                        clearFormData()
+                        destroy()
+                    }
+                    feedback = "Browser data cleared on this device."
+                }.onFailure { feedback = "Could not clear all browser data. Try again." }
+            }) { Text("Clear data") }
+        },
+        dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("Cancel") } },
+        containerColor = androidx.compose.ui.graphics.Color(0xFF111111), titleContentColor = Paper, textContentColor = Muted
+    )
 }
 
 @Composable
