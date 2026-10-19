@@ -12,9 +12,11 @@ WAFF is an Android media-downloader project in active development. The current a
 - [x] Real direct-file transfer via Android DownloadManager to `Downloads/WAFF`
 - [x] Live queue status/byte progress, cancellation, and retry of failed system downloads
 - [x] History search, open/share actions, and confirmed removal of completed downloads
-- [x] URL, hostname, and direct-media MIME unit tests; CI workflow
+- [x] URL, hostname, MIME, and filename-rule unit tests
+- [ ] Room DAO integration test on the CI Android emulator (workflow added; awaiting pass)
 - [ ] Platform-page extraction and format selection
-- [ ] Room-backed queue/history, user-selected storage, retry/pause controls, and verified media opening
+- [x] Room-persisted transfer metadata joined to DownloadManager status and completed-file actions
+- [ ] User-selected storage, explicit pause/resume, verified post-transfer content checks, and storage migrations
 - [x] Embedded WebView browsing with DownloadListener-based direct-file offers
 - [ ] General page-resource inspection, platform-specific media picker, and engine updates
 - [ ] Device review, product-wide accessibility/performance review, and stable release
@@ -24,7 +26,7 @@ The Browser tab uses Android WebView for ordinary browsing and offers a Download
 
 ## Architecture
 
-URL routing and MIME classification are independently tested core logic; the Android transfer adapter delegates transport to DownloadManager. Persistence outside DownloadManager is still rudimentary and platform extractors are not integrated. No ad/analytics SDKs or developer telemetry are included.
+URL routing, MIME classification, and filename rules are independently tested. Room persists WAFF transfer metadata while Android DownloadManager remains authoritative for transfer state and file URIs. Platform extractors are not integrated. No ad/analytics SDKs or developer telemetry are included.
 
 ## Build
 

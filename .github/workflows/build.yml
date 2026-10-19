@@ -43,6 +43,14 @@ jobs:
           fi
       - name: Build debug and release APKs
         run: gradle :app:assembleDebug :app:assembleRelease
+      - name: Room integration test on Android emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          script: gradle :app:connectedDebugAndroidTest --console=plain
       - uses: actions/upload-artifact@v4
         with:
           name: waff-apks

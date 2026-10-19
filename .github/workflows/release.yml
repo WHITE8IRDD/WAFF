@@ -36,6 +36,14 @@ jobs:
         run: |
           gradle :app:testDebugUnitTest --console=plain
           gradle :app:assembleDebug :app:assembleRelease --console=plain
+      - name: Room integration test on Android emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          script: gradle :app:connectedDebugAndroidTest --console=plain
       - name: Prepare artifacts and checksums
         run: |
           mkdir -p release-assets

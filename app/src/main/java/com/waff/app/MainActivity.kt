@@ -160,7 +160,7 @@ private fun HomeScreen(
 
 @Composable
 private fun TransferList(repository: DirectDownloadRepository, historyOnly: Boolean, modifier: Modifier = Modifier) {
-    var transfers by remember { mutableStateOf(repository.snapshots()) }
+    var transfers by remember { mutableStateOf(emptyList<TransferSnapshot>()) }
     var query by remember { mutableStateOf("") }
     var pendingDelete by remember { mutableStateOf<TransferSnapshot?>(null) }
     var feedback by remember { mutableStateOf<String?>(null) }
@@ -169,7 +169,7 @@ private fun TransferList(repository: DirectDownloadRepository, historyOnly: Bool
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, repository) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) transfers = repository.snapshots()
+            if (event == Lifecycle.Event.ON_RESUME) scope.launch { transfers = repository.snapshots() }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
@@ -196,7 +196,7 @@ private fun TransferList(repository: DirectDownloadRepository, historyOnly: Bool
         } else LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             items(visible, key = { it.id }) { transfer ->
                 TransferRow(transfer,
-                    onCancel = { repository.cancel(transfer.id) },
+                    onCancel = { scope.launch { repository.cancel(transfer.id); transfers = repository.snapshots() } },
                     onRetry = { scope.launch {
                         when (val result = repository.retry(transfer.id)) {
                             is EnqueueResult.Added -> feedback = "Retry started · ${result.filename}"
@@ -204,8 +204,8 @@ private fun TransferList(repository: DirectDownloadRepository, historyOnly: Bool
                         }
                         transfers = repository.snapshots()
                     } },
-                    onOpen = { feedback = if (repository.open(transfer.id, context)) null else "No app could open this file, or it is no longer available." },
-                    onShare = { feedback = if (repository.share(transfer.id, context)) null else "This file is no longer available to share." },
+                    onOpen = { feedback = if (repository.open(transfer, context)) null else "No app could open this file, or it is no longer available." },
+                    onShare = { feedback = if (repository.share(transfer, context)) null else "This file is no longer available to share." },
                     onDelete = { pendingDelete = transfer })
             }
         }
@@ -214,7 +214,7 @@ private fun TransferList(repository: DirectDownloadRepository, historyOnly: Bool
         AlertDialog(onDismissRequest = { pendingDelete = null },
             title = { Text("Delete downloaded file?") },
             text = { Text("${transfer.filename} will be removed from Downloads and WAFF history.") },
-            confirmButton = { TextButton(onClick = { repository.cancel(transfer.id); pendingDelete = null; transfers = repository.snapshots() }) { Text("Delete") } },
+            confirmButton = { TextButton(onClick = { scope.launch { repository.cancel(transfer.id); pendingDelete = null; transfers = repository.snapshots() } }) { Text("Delete") } },
             dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("Keep file") } },
             containerColor = androidx.compose.ui.graphics.Color(0xFF111111), titleContentColor = Paper, textContentColor = Muted)
     }

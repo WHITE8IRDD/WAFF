@@ -2,6 +2,7 @@ package com.waff.app.core
 
 import android.app.DownloadManager
 import android.content.Context
+import android.content.Intent
 import android.database.Cursor
 import android.net.Uri
 import android.os.Environment
@@ -19,6 +20,7 @@ sealed interface EnqueueResult {
 data class TransferSnapshot(
     val id: Long,
     val filename: String,
+    val mimeType: String,
     val status: Int,
     val bytesDownloaded: Long,
     val totalBytes: Long,
@@ -27,11 +29,11 @@ data class TransferSnapshot(
     val progressPercent: Int? get() = if (totalBytes > 0) ((bytesDownloaded * 100) / totalBytes).toInt().coerceIn(0, 100) else null
 }
 
-/** Handles direct, publicly reachable media files. It does not extract media from social posts or protected streams. */
+/** Handles direct, publicly reachable media files. Social-post extraction and protected streams are not supported. */
 class DirectDownloadRepository(context: Context) {
     private val app = context.applicationContext
     private val manager = app.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-    private val preferences = app.getSharedPreferences("direct_downloads", Context.MODE_PRIVATE)
+    private val dao = DownloadDatabase.get(app).downloadRecordDao()
 
     suspend fun enqueue(rawUrl: String): EnqueueResult = withContext(Dispatchers.IO) {
         val parsed = UrlRouter.parse(rawUrl)
@@ -45,7 +47,7 @@ class DirectDownloadRepository(context: Context) {
         if (uri.scheme != "https" || uri.host.isNullOrBlank()) {
             return@withContext EnqueueResult.Rejected("For a secure transfer, WAFF currently accepts HTTPS links only.")
         }
-        val response = try {
+        val mime = try {
             val connection = (URL(url).openConnection() as HttpURLConnection).apply {
                 requestMethod = "HEAD"
                 connectTimeout = 10_000
@@ -56,17 +58,17 @@ class DirectDownloadRepository(context: Context) {
             try {
                 val code = connection.responseCode
                 if (code !in 200..299) return@withContext EnqueueResult.Rejected("The server did not provide a downloadable file (HTTP $code). Try a direct media-file URL.")
-                val type = DirectMediaRules.normalizedMime(connection.contentType)
-                if (!DirectMediaRules.isMediaMime(type)) {
-                    return@withContext EnqueueResult.Rejected("This link does not identify a direct image, audio, or video file.")
+                DirectMediaRules.normalizedMime(connection.contentType).also {
+                    if (!DirectMediaRules.isMediaMime(it)) return@withContext EnqueueResult.Rejected("This link does not identify a direct image, audio, or video file.")
                 }
-                type
             } finally { connection.disconnect() }
         } catch (_: Exception) {
             return@withContext EnqueueResult.Rejected("Could not inspect that link. Check your connection and try again.")
         }
-        val mime = response
-        val filename = uniqueFilename(filename(uri.lastPathSegment.orEmpty(), mime))
+        val mimeExtension = MimeTypeMap.getSingleton().getExtensionFromMimeType(mime)
+        val candidateName = FileNameRules.withMimeExtension(uri.lastPathSegment.orEmpty(), mimeExtension)
+        val filename = uniqueFilename(candidateName)
+        var id: Long? = null
         try {
             val request = DownloadManager.Request(Uri.parse(url))
                 .setTitle(filename)
@@ -74,28 +76,36 @@ class DirectDownloadRepository(context: Context) {
                 .setMimeType(mime)
                 .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
                 .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "WAFF/$filename")
-            val id = manager.enqueue(request)
-            preferences.edit()
-                .putString(id.toString(), filename)
-                .putString("$id.mime", mime)
-                .apply()
-            EnqueueResult.Added(id, filename, mime)
+            val downloadId = manager.enqueue(request)
+            id = downloadId
+            dao.insert(DownloadRecord(downloadId, filename, mime, System.currentTimeMillis()))
+            EnqueueResult.Added(downloadId, filename, mime)
         } catch (_: Exception) {
+            id?.let { manager.remove(it) }
             EnqueueResult.Rejected("Android could not start this download. Check that Downloads is available and try again.")
         }
     }
 
-    fun snapshots(): List<TransferSnapshot> {
-        val ids = preferences.all.keys.mapNotNull { it.toLongOrNull() }
-        if (ids.isEmpty()) return emptyList()
-        val query = DownloadManager.Query().setFilterById(*ids.toLongArray())
-        val cursor = runCatching { manager.query(query) }.getOrNull() ?: return emptyList()
-        return cursor.use { c -> buildList { while (c.moveToNext()) add(c.snapshot()) } }.sortedByDescending { it.id }
+    suspend fun snapshots(): List<TransferSnapshot> = withContext(Dispatchers.IO) {
+        val records = dao.getAll()
+        if (records.isEmpty()) return@withContext emptyList()
+        val byId = records.associateBy(DownloadRecord::id)
+        val found = records.chunked(500).flatMap { batch ->
+            val cursor = runCatching { manager.query(DownloadManager.Query().setFilterById(*batch.map(DownloadRecord::id).toLongArray())) }.getOrNull()
+                ?: return@flatMap emptyList()
+            cursor.use { c -> buildList { while (c.moveToNext()) {
+                val id = c.getLong(c.getColumnIndexOrThrow(DownloadManager.COLUMN_ID))
+                byId[id]?.let { add(c.snapshot(it)) }
+            } } }
+        }
+        val activeIds = found.mapTo(HashSet(), TransferSnapshot::id)
+        records.filterNot { it.id in activeIds }.forEach { dao.delete(it.id) }
+        found.sortedByDescending { byId[it.id]?.createdAtMillis ?: 0L }
     }
 
-    fun cancel(id: Long) {
+    suspend fun cancel(id: Long) = withContext(Dispatchers.IO) {
         manager.remove(id)
-        preferences.edit().remove(id.toString()).remove("$id.mime").apply()
+        dao.delete(id)
     }
 
     suspend fun retry(id: Long): EnqueueResult {
@@ -107,60 +117,43 @@ class DirectDownloadRepository(context: Context) {
         }
     }
 
-    fun open(id: Long, context: Context): Boolean {
-        val uri = manager.getUriForDownloadedFile(id) ?: return false
-        val mime = preferences.getString("$id.mime", "application/octet-stream") ?: "application/octet-stream"
+    fun open(transfer: TransferSnapshot, context: Context): Boolean {
+        val uri = manager.getUriForDownloadedFile(transfer.id) ?: return false
         return runCatching {
-            context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
-                setDataAndType(uri, mime)
-                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            context.startActivity(Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, transfer.mimeType)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             })
         }.isSuccess
     }
 
-    fun share(id: Long, context: Context): Boolean {
-        val uri = manager.getUriForDownloadedFile(id) ?: return false
-        val mime = preferences.getString("$id.mime", "application/octet-stream") ?: "application/octet-stream"
+    fun share(transfer: TransferSnapshot, context: Context): Boolean {
+        val uri = manager.getUriForDownloadedFile(transfer.id) ?: return false
         return runCatching {
-            val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-                type = mime
-                putExtra(android.content.Intent.EXTRA_STREAM, uri)
-                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            val send = Intent(Intent.ACTION_SEND).apply {
+                type = transfer.mimeType
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
-            context.startActivity(android.content.Intent.createChooser(send, "Share media"))
+            context.startActivity(Intent.createChooser(send, "Share media"))
         }.isSuccess
     }
 
-    private fun originalUrl(id: Long): String? {
-        val cursor = runCatching { manager.query(DownloadManager.Query().setFilterById(id)) }.getOrNull() ?: return null
-        return cursor.use { c -> if (c.moveToFirst()) c.getColumnIndex(DownloadManager.COLUMN_URI).takeIf { it >= 0 }?.let(c::getString) else null }
+    private suspend fun originalUrl(id: Long): String? = withContext(Dispatchers.IO) {
+        val cursor = runCatching { manager.query(DownloadManager.Query().setFilterById(id)) }.getOrNull() ?: return@withContext null
+        cursor.use { c -> if (c.moveToFirst()) c.getColumnIndex(DownloadManager.COLUMN_URI).takeIf { it >= 0 }?.let(c::getString) else null }
     }
 
-    private fun uniqueFilename(candidate: String): String {
-        val existing = preferences.all.keys.filter { it.toLongOrNull() != null }
-            .mapNotNull { preferences.getString(it, null) }.toSet()
-        if (candidate !in existing) return candidate
-        val stem = candidate.substringBeforeLast('.', candidate)
-        val suffix = candidate.substringAfterLast('.', "").takeIf { it.isNotBlank() }?.let { ".$it" }.orEmpty()
-        var index = 2
-        while ("$stem ($index)$suffix" in existing) index++
-        return "$stem ($index)$suffix"
+    private suspend fun uniqueFilename(candidate: String): String {
+        val existing = dao.getAll().mapTo(HashSet(), DownloadRecord::filename)
+        return FileNameRules.unique(candidate, existing)
     }
 
-    private fun Cursor.snapshot(): TransferSnapshot {
+    private fun Cursor.snapshot(record: DownloadRecord): TransferSnapshot {
         fun int(column: String) = getColumnIndex(column).takeIf { it >= 0 }?.let(::getInt) ?: 0
         fun long(column: String) = getColumnIndex(column).takeIf { it >= 0 }?.let(::getLong) ?: 0L
-        val id = long(DownloadManager.COLUMN_ID)
-        val name = preferences.getString(id.toString(), "Media download") ?: "Media download"
-        return TransferSnapshot(id, name, int(DownloadManager.COLUMN_STATUS), long(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR), long(DownloadManager.COLUMN_TOTAL_SIZE_BYTES), int(DownloadManager.COLUMN_REASON))
+        return TransferSnapshot(record.id, record.filename, record.mimeType, int(DownloadManager.COLUMN_STATUS),
+            long(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR), long(DownloadManager.COLUMN_TOTAL_SIZE_BYTES), int(DownloadManager.COLUMN_REASON))
     }
 
-    private fun filename(candidate: String, mime: String): String {
-        val ext = MimeTypeMap.getSingleton().getExtensionFromMimeType(mime)?.let { ".$it" } ?: ""
-        val stem = candidate.substringBeforeLast('.', candidate).replace(Regex("[^A-Za-z0-9._-]"), "_").trim('.', '_').take(80)
-            .ifBlank { "media" }
-        // The response MIME type is the authority. Never preserve a misleading URL suffix (for example, .jpg on a video).
-        val suffix = ext.removePrefix(".")
-        return if (suffix.isBlank()) stem.take(100) else "$stem.$suffix".take(100)
-    }
 }
