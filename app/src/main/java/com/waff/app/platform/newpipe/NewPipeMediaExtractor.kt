@@ -33,6 +33,7 @@ internal data class ExtractedFormat(
     val codec: String? = null,
     val bitrate: Int? = null,
     val language: String? = null,
+    val fileSizeBytes: Long? = null,
     val headers: Map<String, String> = emptyMap()
 )
 
@@ -51,6 +52,7 @@ internal data class ExtractedMediaInfo(
     val thumbnailUrl: String?,
     val formats: List<ExtractedFormat>,
     val subtitles: List<ExtractedSubtitle>,
+    val hashtags: List<String> = emptyList(),
     val supportsYtDlpMerge: Boolean = false
 )
 

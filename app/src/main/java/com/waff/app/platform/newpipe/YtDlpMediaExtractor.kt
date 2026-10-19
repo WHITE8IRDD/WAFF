@@ -33,6 +33,8 @@ internal class YtDlpMediaExtractor(context: Context) {
             formats = info.formats.orEmpty().mapNotNull { it.toExtractedFormat() }
                 .distinctBy { it.id },
             subtitles = emptyList(),
+            hashtags = info.tags.orEmpty().map { it.trim().removePrefix("#") }
+                .filter { it.matches(Regex("[\\p{L}\\p{N}_]{1,80}")) }.distinct(),
             supportsYtDlpMerge = true
         )
     }
@@ -76,6 +78,7 @@ internal class YtDlpMediaExtractor(context: Context) {
             frameRate = fps.takeIf { it > 0 },
             codec = listOfNotNull(vcodec, acodec).joinToString(" + ").takeIf { it.isNotBlank() },
             bitrate = (tbr * 1000).takeIf { it > 0 },
+            fileSizeBytes = (fileSize.takeIf { it > 0 } ?: fileSizeApproximate.takeIf { it > 0 }),
             headers = httpHeaders.orEmpty()
         )
     }

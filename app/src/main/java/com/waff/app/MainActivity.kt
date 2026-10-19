@@ -141,6 +141,8 @@ private fun HomeScreen(
     var selectedVideoFormatId by remember { mutableStateOf<String?>(null) }
     var selectedAudioFormatId by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
+    var showFormatsSheet by remember { mutableStateOf(false) }
+    var alsoSaveThumbnail by remember { mutableStateOf(false) }
     val parsedLink = UrlRouter.parse(link)
     val extractorUrl = when (parsedLink) {
         is PlatformLink.Supported -> parsedLink.canonicalUrl
@@ -185,6 +187,7 @@ private fun HomeScreen(
                             val extracted = if (socialNeedsFallback) ytDlpExtractor.extract(extractorUrl.orEmpty())
                                 else mediaExtractor.extract(extractorUrl.orEmpty())
                             mediaInfo = extracted
+                            showFormatsSheet = true
                             selectedFormatId = MediaFormatPolicy.defaultFormat(extracted)?.id
                             selectedVideoFormatId = extracted.formats.firstOrNull { it.kind == com.waff.app.platform.newpipe.ExtractedFormatKind.VIDEO_ONLY }?.id
                             selectedAudioFormatId = extracted.formats.firstOrNull { it.kind == com.waff.app.platform.newpipe.ExtractedFormatKind.AUDIO }?.id
@@ -193,7 +196,16 @@ private fun HomeScreen(
                             val format = info.formats.firstOrNull { it.id == selectedFormatId }
                             if (format == null) setFeedback("Select one of the formats returned by the extractor.")
                             else when (val result = repository.enqueueResolvedMedia(format.url, info.title, format.mimeType, format.headers)) {
-                                is EnqueueResult.Added -> { setFeedback("Download started · ${result.filename}"); onQueued() }
+                                is EnqueueResult.Added -> {
+                                    setFeedback("Download started · ${result.filename}")
+                                    if (alsoSaveThumbnail && !info.thumbnailUrl.isNullOrBlank()) {
+                                        when (val thumbnail = repository.enqueueResolvedMedia(info.thumbnailUrl, "${info.title} thumbnail", "image/*")) {
+                                            is EnqueueResult.Added -> setFeedback("Video and thumbnail queued")
+                                            is EnqueueResult.Rejected -> setFeedback("Video queued; thumbnail failed: ${thumbnail.reason}")
+                                        }
+                                    }
+                                    onQueued()
+                                }
                                 is EnqueueResult.Rejected -> setFeedback(result.reason)
                             }
                         } else {
@@ -216,52 +228,10 @@ private fun HomeScreen(
             }
         }
         mediaInfo?.let { info ->
-            val mergeIdsAreSafe = listOfNotNull(selectedVideoFormatId, selectedAudioFormatId)
-                .let { it.size == 2 && it.all { id -> Regex("^[A-Za-z0-9._-]{1,64}$").matches(id) } }
-            val mergeSupported = info.supportsYtDlpMerge && mergeIdsAreSafe
-            ExtractedFormatsPanel(info, selectedFormatId, { selectedFormatId = it },
-                selectedVideoFormatId, { selectedVideoFormatId = it },
-                selectedAudioFormatId, { selectedAudioFormatId = it },
-                mergeSupported = mergeSupported,
-                onMerge = {
-                    val videoId = selectedVideoFormatId
-                    val audioId = selectedAudioFormatId
-                    if (videoId != null && audioId != null) scope.launch {
-                        if (busy) return@launch
-                        busy = true
-                        try {
-                            when (val result = repository.enqueueMerged(extractorUrl.orEmpty(), info.title, videoId, audioId)) {
-                                is EnqueueResult.Added -> { setFeedback("Merge queued · ${result.filename}"); onQueued() }
-                                is EnqueueResult.Rejected -> setFeedback(result.reason)
-                            }
-                        } finally { busy = false }
-                    }
-                },
-                onSaveSubtitle = { subtitle ->
-                    scope.launch {
-                        if (busy) return@launch
-                        busy = true
-                        try {
-                            when (val result = repository.enqueueResolvedSubtitle(subtitle.url, info.title, subtitle.languageTag, subtitle.extension)) {
-                                is EnqueueResult.Added -> { setFeedback("Subtitle queued · ${result.filename}"); onQueued() }
-                                is EnqueueResult.Rejected -> setFeedback(result.reason)
-                            }
-                        } finally { busy = false }
-                    }
-                },
-                onSaveThumbnail = {
-                    scope.launch {
-                        if (busy) return@launch
-                        busy = true
-                        try {
-                            val imageUrl = info.thumbnailUrl.orEmpty()
-                            when (val result = repository.enqueueResolvedMedia(imageUrl, "${info.title} thumbnail", "image/*")) {
-                                is EnqueueResult.Added -> { setFeedback("Thumbnail queued · ${result.filename}"); onQueued() }
-                                is EnqueueResult.Rejected -> setFeedback(result.reason)
-                            }
-                        } finally { busy = false }
-                    }
-                })
+            OutlinedButton(onClick = { showFormatsSheet = true }, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Outlined.Tune, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
+                Text("Choose quality · ${info.formats.size} formats")
+            }
         }
         if (feedback != null) Text(feedback, color = Muted, style = MaterialTheme.typography.bodySmall)
         Spacer(Modifier.weight(1f))
@@ -270,6 +240,44 @@ private fun HomeScreen(
             Text("No WAFF account required. Links go directly to their source.", color = Muted, style = MaterialTheme.typography.labelMedium)
         }
         Spacer(Modifier.height(18.dp))
+    }
+    val sheetInfo = mediaInfo
+    if (showFormatsSheet && sheetInfo != null) {
+        ModalBottomSheet(onDismissRequest = { showFormatsSheet = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            containerColor = androidx.compose.ui.graphics.Color(0xFF0A0A0A), contentColor = Paper) {
+            val info = sheetInfo
+            val mergeIdsAreSafe = listOfNotNull(selectedVideoFormatId, selectedAudioFormatId)
+                .let { it.size == 2 && it.all { id -> Regex("^[A-Za-z0-9._-]{1,64}$").matches(id) } }
+            val mergeSupported = info.supportsYtDlpMerge && mergeIdsAreSafe
+            ExtractedFormatsPanel(info, selectedFormatId, { selectedFormatId = it },
+                selectedVideoFormatId, { selectedVideoFormatId = it }, selectedAudioFormatId, { selectedAudioFormatId = it },
+                mergeSupported, onMerge = {
+                    val videoId = selectedVideoFormatId; val audioId = selectedAudioFormatId
+                    if (videoId != null && audioId != null) scope.launch {
+                        if (busy) return@launch
+                        busy = true
+                        try { when (val result = repository.enqueueMerged(extractorUrl.orEmpty(), info.title, videoId, audioId)) {
+                            is EnqueueResult.Added -> { setFeedback("Merge queued · ${result.filename}"); onQueued(); showFormatsSheet = false }
+                            is EnqueueResult.Rejected -> setFeedback(result.reason)
+                        } } finally { busy = false }
+                    }
+                },
+                onSaveSubtitle = { subtitle -> scope.launch {
+                    when (val result = repository.enqueueResolvedSubtitle(subtitle.url, info.title, subtitle.languageTag, subtitle.extension)) {
+                        is EnqueueResult.Added -> { setFeedback("Subtitle queued · ${result.filename}"); onQueued() }
+                        is EnqueueResult.Rejected -> setFeedback(result.reason)
+                    }
+                } },
+                onSaveThumbnail = { scope.launch {
+                    when (val result = repository.enqueueResolvedMedia(info.thumbnailUrl.orEmpty(), "${info.title} thumbnail", "image/*")) {
+                        is EnqueueResult.Added -> { setFeedback("Thumbnail queued · ${result.filename}"); onQueued() }
+                        is EnqueueResult.Rejected -> setFeedback(result.reason)
+                    }
+                } },
+                alsoSaveThumbnail = alsoSaveThumbnail,
+                onAlsoSaveThumbnail = { alsoSaveThumbnail = it })
+        }
     }
 }
 
