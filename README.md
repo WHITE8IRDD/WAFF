@@ -10,8 +10,9 @@ WAFF is an Android media-downloader project in active development. The current a
 - [x] Share-text intent handling and supported-platform URL recognition
 - [x] Direct HTTPS media-file preflight using HTTP response MIME type
 - [x] Real direct-file transfer via Android DownloadManager to `Downloads/WAFF`
-- [x] Live queue status/byte progress and completed-transfer list backed by DownloadManager
-- [x] Initial URL and direct-media MIME unit tests; CI workflow
+- [x] Live queue status/byte progress, cancellation, and retry of failed system downloads
+- [x] History search, open/share actions, and confirmed removal of completed downloads
+- [x] URL, hostname, and direct-media MIME unit tests; CI workflow
 - [ ] Platform-page extraction and format selection
 - [ ] Room-backed queue/history, user-selected storage, retry/pause controls, and verified media opening
 - [ ] Browser media detection, platform-specific media picker, and engine updates

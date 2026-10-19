@@ -160,6 +160,11 @@ private fun HomeScreen(
 @Composable
 private fun TransferList(repository: DirectDownloadRepository, historyOnly: Boolean, modifier: Modifier = Modifier) {
     var transfers by remember { mutableStateOf(repository.snapshots()) }
+    var query by remember { mutableStateOf("") }
+    var pendingDelete by remember { mutableStateOf<TransferSnapshot?>(null) }
+    var feedback by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, repository) {
         val observer = LifecycleEventObserver { _, event ->
@@ -172,20 +177,50 @@ private fun TransferList(repository: DirectDownloadRepository, historyOnly: Bool
         while (true) { transfers = repository.snapshots(); delay(1000) }
     }
     val visible = transfers.filter { if (historyOnly) it.status == DownloadManager.STATUS_SUCCESSFUL else it.status != DownloadManager.STATUS_SUCCESSFUL }
+        .filter { !historyOnly || it.filename.contains(query.trim(), ignoreCase = true) }
     Column(modifier.fillMaxSize().padding(horizontal = 20.dp)) {
         Text(if (historyOnly) "History" else "Queue", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Medium,
             modifier = Modifier.padding(top = 20.dp, bottom = 16.dp))
+        if (historyOnly) OutlinedTextField(value = query, onValueChange = { query = it }, modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+            singleLine = true, placeholder = { Text("Search downloaded files", color = Muted) }, leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
+            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Paper, unfocusedBorderColor = Line, cursorColor = Paper, focusedTextColor = Paper, unfocusedTextColor = Paper))
+        if (feedback != null) Text(feedback!!, color = Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 8.dp))
         if (visible.isEmpty()) {
-            Text(if (historyOnly) "No completed direct downloads yet." else "No active downloads. Add a direct media-file link to get started.",
-                style = MaterialTheme.typography.bodyMedium, color = Muted, modifier = Modifier.padding(top = 8.dp))
+            val message = when {
+                historyOnly && query.isNotBlank() -> "No downloads match “${query.trim()}”."
+                historyOnly -> "No completed direct downloads yet."
+                else -> "No active downloads. Add a direct media-file link to get started."
+            }
+            Text(message, style = MaterialTheme.typography.bodyMedium, color = Muted, modifier = Modifier.padding(top = 8.dp))
         } else LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            items(visible, key = { it.id }) { transfer -> TransferRow(transfer, onCancel = { repository.cancel(transfer.id) }) }
+            items(visible, key = { it.id }) { transfer ->
+                TransferRow(transfer,
+                    onCancel = { repository.cancel(transfer.id) },
+                    onRetry = { scope.launch {
+                        when (val result = repository.retry(transfer.id)) {
+                            is EnqueueResult.Added -> feedback = "Retry started · ${result.filename}"
+                            is EnqueueResult.Rejected -> feedback = result.reason
+                        }
+                        transfers = repository.snapshots()
+                    } },
+                    onOpen = { feedback = if (repository.open(transfer.id, context)) null else "No app could open this file, or it is no longer available." },
+                    onShare = { feedback = if (repository.share(transfer.id, context)) null else "This file is no longer available to share." },
+                    onDelete = { pendingDelete = transfer })
+            }
         }
+    }
+    pendingDelete?.let { transfer ->
+        AlertDialog(onDismissRequest = { pendingDelete = null },
+            title = { Text("Delete downloaded file?") },
+            text = { Text("${transfer.filename} will be removed from Downloads and WAFF history.") },
+            confirmButton = { TextButton(onClick = { repository.cancel(transfer.id); pendingDelete = null; transfers = repository.snapshots() }) { Text("Delete") } },
+            dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("Keep file") } },
+            containerColor = androidx.compose.ui.graphics.Color(0xFF111111), titleContentColor = Paper, textContentColor = Muted)
     }
 }
 
 @Composable
-private fun TransferRow(transfer: TransferSnapshot, onCancel: () -> Unit) {
+private fun TransferRow(transfer: TransferSnapshot, onCancel: () -> Unit, onRetry: () -> Unit, onOpen: () -> Unit, onShare: () -> Unit, onDelete: () -> Unit) {
     val status = when (transfer.status) {
         DownloadManager.STATUS_PENDING -> "Waiting"
         DownloadManager.STATUS_RUNNING -> "Downloading"
@@ -200,8 +235,15 @@ private fun TransferRow(transfer: TransferSnapshot, onCancel: () -> Unit) {
                 Text(transfer.filename, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Medium)
                 Text(status, style = MaterialTheme.typography.bodySmall, color = Muted)
             }
-            if (transfer.status != DownloadManager.STATUS_SUCCESSFUL) IconButton(onClick = onCancel) {
-                Icon(Icons.Outlined.Close, contentDescription = "Cancel download")
+            if (transfer.status == DownloadManager.STATUS_SUCCESSFUL) {
+                IconButton(onClick = onOpen) { Icon(Icons.Outlined.OpenInNew, contentDescription = "Open downloaded file") }
+                IconButton(onClick = onShare) { Icon(Icons.Outlined.Share, contentDescription = "Share downloaded file") }
+                IconButton(onClick = onDelete) { Icon(Icons.Outlined.DeleteOutline, contentDescription = "Delete downloaded file") }
+            } else {
+                if (transfer.status == DownloadManager.STATUS_FAILED) IconButton(onClick = onRetry) {
+                    Icon(Icons.Outlined.Refresh, contentDescription = "Retry failed download")
+                }
+                IconButton(onClick = onCancel) { Icon(Icons.Outlined.Close, contentDescription = "Cancel and remove download") }
             }
         }
         if (transfer.status == DownloadManager.STATUS_RUNNING || transfer.status == DownloadManager.STATUS_PENDING) {

@@ -66,7 +66,7 @@ class DirectDownloadRepository(context: Context) {
             return@withContext EnqueueResult.Rejected("Could not inspect that link. Check your connection and try again.")
         }
         val mime = response
-        val filename = filename(uri.lastPathSegment.orEmpty(), mime)
+        val filename = uniqueFilename(filename(uri.lastPathSegment.orEmpty(), mime))
         try {
             val request = DownloadManager.Request(Uri.parse(url))
                 .setTitle(filename)
@@ -75,7 +75,10 @@ class DirectDownloadRepository(context: Context) {
                 .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
                 .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "WAFF/$filename")
             val id = manager.enqueue(request)
-            preferences.edit().putString(id.toString(), filename).apply()
+            preferences.edit()
+                .putString(id.toString(), filename)
+                .putString("$id.mime", mime)
+                .apply()
             EnqueueResult.Added(id, filename, mime)
         } catch (_: Exception) {
             EnqueueResult.Rejected("Android could not start this download. Check that Downloads is available and try again.")
@@ -92,7 +95,54 @@ class DirectDownloadRepository(context: Context) {
 
     fun cancel(id: Long) {
         manager.remove(id)
-        preferences.edit().remove(id.toString()).apply()
+        preferences.edit().remove(id.toString()).remove("$id.mime").apply()
+    }
+
+    suspend fun retry(id: Long): EnqueueResult {
+        val source = originalUrl(id)
+            ?: return EnqueueResult.Rejected("The original link is no longer available in Android Downloads.")
+        cancel(id)
+        return enqueue(source)
+    }
+
+    fun open(id: Long, context: Context): Boolean {
+        val uri = manager.getUriForDownloadedFile(id) ?: return false
+        val mime = preferences.getString("$id.mime", "application/octet-stream") ?: "application/octet-stream"
+        return runCatching {
+            context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, mime)
+                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            })
+        }.isSuccess
+    }
+
+    fun share(id: Long, context: Context): Boolean {
+        val uri = manager.getUriForDownloadedFile(id) ?: return false
+        val mime = preferences.getString("$id.mime", "application/octet-stream") ?: "application/octet-stream"
+        return runCatching {
+            val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                type = mime
+                putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(android.content.Intent.createChooser(send, "Share media"))
+        }.isSuccess
+    }
+
+    private fun originalUrl(id: Long): String? {
+        val cursor = runCatching { manager.query(DownloadManager.Query().setFilterById(id)) }.getOrNull() ?: return null
+        return cursor.use { c -> if (c.moveToFirst()) c.getColumnIndex(DownloadManager.COLUMN_URI).takeIf { it >= 0 }?.let(c::getString) else null }
+    }
+
+    private fun uniqueFilename(candidate: String): String {
+        val existing = preferences.all.keys.filter { it.toLongOrNull() != null }
+            .mapNotNull { preferences.getString(it, null) }.toSet()
+        if (candidate !in existing) return candidate
+        val stem = candidate.substringBeforeLast('.', candidate)
+        val suffix = candidate.substringAfterLast('.', "").takeIf { it.isNotBlank() }?.let { ".$it" }.orEmpty()
+        var index = 2
+        while ("$stem ($index)$suffix" in existing) index++
+        return "$stem ($index)$suffix"
     }
 
     private fun Cursor.snapshot(): TransferSnapshot {
