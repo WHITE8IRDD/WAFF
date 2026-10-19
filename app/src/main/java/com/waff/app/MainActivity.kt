@@ -138,7 +138,7 @@ private fun HomeScreen(
     Column(modifier.fillMaxSize().padding(horizontal = 24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         Spacer(Modifier.height(24.dp))
         Text("Save media.\nKeep it yours.", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Medium, lineHeight = 38.sp)
-        Text("Paste a supported video link or a direct media-file URL.", style = MaterialTheme.typography.bodyMedium, color = Muted)
+        Text("Paste a supported media page or a direct file URL.", style = MaterialTheme.typography.bodyMedium, color = Muted)
         OutlinedTextField(value = link, onValueChange = { onLinkChange(it); setFeedback(null); mediaInfo = null; selectedFormatId = null }, modifier = Modifier.fillMaxWidth(),
             placeholder = { Text("Paste a direct media link", color = Muted) }, leadingIcon = { Icon(Icons.Outlined.Link, null) },
             singleLine = true, shape = RoundedCornerShape(12.dp), keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
