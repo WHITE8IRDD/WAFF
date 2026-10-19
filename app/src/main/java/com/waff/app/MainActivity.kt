@@ -47,17 +47,20 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
     private var incomingLink by mutableStateOf("")
     private var incomingIntentVersion by mutableIntStateOf(0)
+    private var incomingQuickDownload by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         incomingLink = sharedText(intent)
-        setContent { WaffApp(incomingLink, incomingIntentVersion) }
+        incomingQuickDownload = intent.getBooleanExtra(EXTRA_QUICK_DOWNLOAD, false)
+        setContent { WaffApp(incomingLink, incomingIntentVersion, incomingQuickDownload) }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         incomingLink = sharedText(intent)
+        incomingQuickDownload = intent.getBooleanExtra(EXTRA_QUICK_DOWNLOAD, false)
         incomingIntentVersion++
     }
 
@@ -66,6 +69,8 @@ class MainActivity : ComponentActivity() {
         Intent.ACTION_VIEW -> source.dataString.orEmpty()
         else -> ""
     }
+
+    companion object { const val EXTRA_QUICK_DOWNLOAD = "com.waff.app.QUICK_DOWNLOAD" }
 }
 
 internal val Ink = androidx.compose.ui.graphics.Color(0xFF000000)
@@ -75,7 +80,7 @@ internal val Line = androidx.compose.ui.graphics.Color(0xFF2A2A2A)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun WaffApp(sharedText: String, intentVersion: Int) {
+private fun WaffApp(sharedText: String, intentVersion: Int, quickDownload: Boolean) {
     var selected by remember { mutableStateOf("Home") }
     var link by remember { mutableStateOf(sharedText) }
     var feedback by remember { mutableStateOf<String?>(null) }
@@ -109,7 +114,7 @@ private fun WaffApp(sharedText: String, intentVersion: Int) {
         ) { padding ->
             when (selected) {
                 "Home" -> HomeScreen(link, { link = it }, feedback, { feedback = it }, repository,
-                    { selected = "Queue" }, Modifier.padding(padding))
+                    { selected = "Queue" }, quickDownload, Modifier.padding(padding))
                 "Browser" -> BrowserScreen(repository, { selected = "Queue" }, Modifier.padding(padding))
                 "Queue" -> TransferList(repository, historyOnly = false, Modifier.padding(padding))
                 "History" -> TransferList(repository, historyOnly = true, Modifier.padding(padding))
@@ -129,6 +134,7 @@ private fun HomeScreen(
     setFeedback: (String?) -> Unit,
     repository: DirectDownloadRepository,
     onQueued: () -> Unit,
+    quickDownload: Boolean,
     modifier: Modifier = Modifier
 ) {
     val clipboard = LocalClipboardManager.current
@@ -144,6 +150,8 @@ private fun HomeScreen(
     var busy by remember { mutableStateOf(false) }
     var showFormatsSheet by remember { mutableStateOf(false) }
     var alsoSaveThumbnail by remember { mutableStateOf(false) }
+    var quickPromptOpen by remember(quickDownload, link) { mutableStateOf(quickDownload && link.isNotBlank()) }
+    var quickSaveRequested by remember { mutableStateOf(false) }
     val parsedLink = UrlRouter.parse(link)
     val extractorUrl = when (parsedLink) {
         is PlatformLink.Supported -> parsedLink.canonicalUrl
@@ -159,6 +167,30 @@ private fun HomeScreen(
     val newPipeCanExtract = extractorUrl?.let(mediaExtractor::supportsUrl) == true
     val socialNeedsFallback = (parsedLink as? PlatformLink.Supported)?.platform?.let { it in setOf(Platform.INSTAGRAM, Platform.TIKTOK, Platform.FACEBOOK) } == true
     val canExtract = newPipeCanExtract || socialNeedsFallback
+    LaunchedEffect(quickSaveRequested) {
+        if (!quickSaveRequested) return@LaunchedEffect
+        busy = true
+        try {
+            if (canExtract) {
+                val info = if (socialNeedsFallback) ytDlpExtractor.extract(extractorUrl.orEmpty())
+                    else mediaExtractor.extract(extractorUrl.orEmpty())
+                val format = MediaFormatPolicy.defaultFormat(info)
+                if (format == null) {
+                    mediaInfo = info
+                    showFormatsSheet = true
+                    setFeedback("No combined default stream; choose a quality below.")
+                } else when (val result = repository.enqueueResolvedMedia(format.url, info.title, format.mimeType, format.headers)) {
+                    is EnqueueResult.Added -> { setFeedback("Quick download started · ${result.filename}"); onQueued() }
+                    is EnqueueResult.Rejected -> setFeedback(result.reason)
+                }
+            } else when (val result = repository.enqueue(link)) {
+                is EnqueueResult.Added -> { setFeedback("Quick download started · ${result.filename}"); onQueued() }
+                is EnqueueResult.Rejected -> setFeedback(result.reason)
+            }
+        } catch (_: Exception) {
+            setFeedback("WAFF could not extract this shared link. Open WAFF to choose another option.")
+        } finally { busy = false; quickSaveRequested = false }
+    }
     Column(modifier.fillMaxSize().padding(horizontal = 24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         Spacer(Modifier.height(24.dp))
         Text("Save media.\nKeep it yours.", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Medium, lineHeight = 38.sp)
@@ -242,6 +274,14 @@ private fun HomeScreen(
         }
         Spacer(Modifier.height(18.dp))
     }
+    if (quickPromptOpen) AlertDialog(
+        onDismissRequest = { quickPromptOpen = false },
+        title = { Text("Quick Download") },
+        text = { Text("Save the shared media using the best available default format?") },
+        confirmButton = { TextButton(onClick = { quickPromptOpen = false; quickSaveRequested = true }) { Text("Save") } },
+        dismissButton = { TextButton(onClick = { quickPromptOpen = false }) { Text("Cancel") } },
+        containerColor = androidx.compose.ui.graphics.Color(0xFF111111), titleContentColor = Paper, textContentColor = Muted
+    )
     val sheetInfo = mediaInfo
     if (showFormatsSheet && sheetInfo != null) {
         ModalBottomSheet(onDismissRequest = { showFormatsSheet = false },
