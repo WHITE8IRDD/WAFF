@@ -31,4 +31,16 @@ class DownloadRecordDaoTest {
         dao.delete(record.id)
         assertEquals(emptyList<DownloadRecord>(), dao.getAll())
     }
+
+    @Test fun managedTransfersPersistProgressAndCanBeRemoved() = runBlocking {
+        val managed = database.managedTransferDao()
+        val record = ManagedTransferRecord(-1L, "merged.mkv", "video/x-matroska", "https://example.test/v",
+            "137+140", "/tmp/merged.mkv", 1234L, android.app.DownloadManager.STATUS_PENDING, 0L, 0L, 0)
+        managed.insert(record)
+        managed.updateProgress(record.id, android.app.DownloadManager.STATUS_RUNNING, 50L, 100L, 0)
+        assertEquals(50L, managed.getById(record.id)?.bytesDownloaded)
+        assertEquals(android.app.DownloadManager.STATUS_RUNNING, managed.getById(record.id)?.status)
+        managed.delete(record.id)
+        assertEquals(null, managed.getById(record.id))
+    }
 }

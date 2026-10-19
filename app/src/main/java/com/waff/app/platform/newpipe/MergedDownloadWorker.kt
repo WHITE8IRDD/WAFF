@@ -34,6 +34,7 @@ internal class MergedDownloadWorker(context: Context, params: WorkerParameters) 
             val outputTemplate = File(parent, record.filename.substringBeforeLast('.') + ".%(ext)s").absolutePath
             val request = YoutubeDLRequest(record.sourceUrl).apply {
                 addOption("--no-playlist")
+                addOption("--no-overwrites")
                 addOption("-f", record.formatSelection)
                 addOption("--merge-output-format", "mkv")
                 addOption("-o", outputTemplate)
@@ -52,17 +53,26 @@ internal class MergedDownloadWorker(context: Context, params: WorkerParameters) 
             dao.updateProgress(transferId, DownloadManager.STATUS_SUCCESSFUL, output.length(), output.length(), 0)
             Result.success()
         } catch (_: CancellationException) {
+            cleanupPartial(record)
             dao.updateProgress(transferId, DownloadManager.STATUS_FAILED, record.bytesDownloaded, record.totalBytes, DownloadManager.ERROR_UNKNOWN)
             Result.failure()
         } catch (_: Exception) {
+            cleanupPartial(record)
             dao.updateProgress(transferId, DownloadManager.STATUS_FAILED, record.bytesDownloaded, record.totalBytes, DownloadManager.ERROR_UNKNOWN)
             Result.failure()
         }
     }
 
     private suspend fun fail(record: ManagedTransferRecord): Result {
+        cleanupPartial(record)
         dao.updateProgress(record.id, DownloadManager.STATUS_FAILED, record.bytesDownloaded, record.totalBytes, DownloadManager.ERROR_UNKNOWN)
         return Result.failure()
+    }
+
+    private fun cleanupPartial(record: ManagedTransferRecord) {
+        val parent = File(record.localPath).parentFile ?: return
+        val stem = File(record.localPath).nameWithoutExtension
+        parent.listFiles()?.filter { it.name == record.filename || it.name.startsWith("$stem.") }?.forEach { it.delete() }
     }
 
     private fun createForegroundInfo(title: String): ForegroundInfo {
