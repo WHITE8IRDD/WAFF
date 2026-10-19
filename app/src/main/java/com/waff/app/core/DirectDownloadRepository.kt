@@ -102,7 +102,7 @@ class DirectDownloadRepository(context: Context) {
         val candidate = FileNameRules.withMimeExtension(suggestedName, extension)
         val filename = uniqueFilename(candidate)
         var id: Long? = null
-        try {
+        return try {
             val request = DownloadManager.Request(Uri.parse(url))
                 .setTitle(filename)
                 .setDescription("WAFF · direct media")

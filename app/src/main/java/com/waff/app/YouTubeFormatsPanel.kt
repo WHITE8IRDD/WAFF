@@ -10,6 +10,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import com.waff.app.platform.youtube.YouTubeFormat
 import com.waff.app.platform.youtube.YouTubeFormatKind
 import com.waff.app.platform.youtube.YouTubeMediaInfo
@@ -46,7 +48,7 @@ internal fun YouTubeFormatsPanel(info: YouTubeMediaInfo, selectedId: String?, on
 @Composable
 private fun FormatChoice(format: YouTubeFormat, selected: Boolean, onSelect: (String) -> Unit) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        RadioButton(selected = selected, onClick = { onSelect(format.id) })
+        RadioButton(selected = selected, onClick = { onSelect(format.id) }, modifier = Modifier.semantics { contentDescription = format.label })
         Column(Modifier.weight(1f).padding(vertical = 4.dp)) {
             Text(format.label, color = Paper, style = MaterialTheme.typography.bodySmall, maxLines = 2)
             val details = listOfNotNull(format.mimeType, format.bitrate?.takeIf { it > 0 }?.let { "${it / 1000} kb/s" }).joinToString(" · ")
