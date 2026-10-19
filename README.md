@@ -42,7 +42,7 @@ gradle :app:testDebugUnitTest
 gradle :app:assembleDebug :app:assembleRelease
 ```
 
-The generated outputs are under `app/build/outputs/apk/`. No wrapper is included yet because the initial environment did not have Java/Gradle available to generate it. CI provisions Java and Android SDK and runs unit tests and debug/release builds. Preview releases are deliberately marked pre-release; the release APK is unsigned, while the CI debug APK uses a temporary debug key and is for evaluation only.
+The generated outputs are under `app/build/outputs/apk/`. No wrapper is included yet because the initial environment did not have Java/Gradle available to generate it. CI provisions Java and Android SDK and runs unit tests and debug/release builds. Preview releases are marked pre-release; stable tags such as `v0.1.0` are published as official releases. The release APK is unsigned, while the CI debug APK uses a temporary debug key and is for evaluation only.
 
 ## Privacy and permissions
 

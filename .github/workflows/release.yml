@@ -50,11 +50,12 @@ jobs:
           cp app/build/outputs/apk/debug/app-debug.apk release-assets/WAFF-${GITHUB_REF_NAME}-debug.apk
           cp app/build/outputs/apk/release/app-release-unsigned.apk release-assets/WAFF-${GITHUB_REF_NAME}-release-unsigned.apk
           (cd release-assets && sha256sum *.apk > SHA256SUMS.txt)
-      - name: Publish preview release
+      - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
+          set -euo pipefail
           if gh release view "$TAG" >/dev/null 2>&1; then
             existing_count="$(gh release view "$TAG" --json assets --jq '.assets | length')"
             if [[ "$existing_count" != "0" ]]; then
@@ -63,11 +64,24 @@ jobs:
             fi
             gh release upload "$TAG" release-assets/*.apk release-assets/SHA256SUMS.txt
           else
+            if [[ "$TAG" == *-* ]]; then
+              title="WAFF $TAG — device-test preview"
+              prerelease_flag="--prerelease"
+              notes="Test-only preview APKs for WAFF. This is not a finished or stable app and is not an official release. The debug APK is signed with a temporary CI debug key for evaluation. The release APK is unsigned and requires signing before installation."
+            else
+              title="WAFF $TAG"
+              prerelease_flag=""
+              notes="WAFF $TAG — an Android media downloader for publicly reachable media. Direct HTTPS image, audio, and video files download through Android DownloadManager after MIME preflight; a NewPipe + on-device yt-dlp extraction flow lists returned formats for public YouTube, Instagram, TikTok, and Facebook pages. Includes the quality picker, Instagram carousel selection with previews, the WAFF Quick Download share target, subtitle and thumbnail saving, a background audio/video merge queue, transfer queue and history with source metadata, and an embedded browser. Requires Android 8.0 (API 26) or newer.
+
+          Installation: WAFF-$TAG-debug.apk is signed with a temporary CI debug key and is the installable evaluation build. WAFF-$TAG-release-unsigned.apk is the release-variant build and must be signed with your own release key before installation or distribution.
+
+          Limitations: media availability varies by service; private, DRM-protected, or login-gated media is not supported. Instagram extraction and download are verified on a physical device; other service flows are broadly available but not exhaustively device-verified, and performance has not been profiled."
+            fi
             gh release create "$TAG" release-assets/*.apk release-assets/SHA256SUMS.txt \
               --target "$GITHUB_SHA" \
-              --title "WAFF $TAG — early preview" \
-              --prerelease \
-              --notes "Early preview build. This is not a stable release and does not implement the full product specification. Direct HTTPS image, audio, and video files are downloaded through Android DownloadManager. Social-platform post extraction, browser detection, and several specified management features are not yet implemented. The release APK is unsigned and requires signing for standard installation; the debug APK is signed with a temporary CI debug key for evaluation."
+              --title "$title" \
+              $prerelease_flag \
+              --notes "$notes"
           fi
           gh release view "$TAG" --json assets --jq '.assets[].name' | sort > /tmp/released-assets.txt
           printf '%s\n' "WAFF-${TAG}-debug.apk" "WAFF-${TAG}-release-unsigned.apk" SHA256SUMS.txt | sort > /tmp/expected-assets.txt
