@@ -38,7 +38,7 @@ class DirectDownloadRepository(context: Context) {
     suspend fun enqueue(rawUrl: String): EnqueueResult = withContext(Dispatchers.IO) {
         val parsed = UrlRouter.parse(rawUrl)
         val url = when (parsed) {
-            is PlatformLink.Supported -> return@withContext EnqueueResult.Rejected("This is a platform page, not a direct media file. Platform extraction is not available yet.")
+            is PlatformLink.Supported -> return@withContext EnqueueResult.Rejected("This page is not handled by the installed extractor. Paste a direct HTTPS media-file URL instead.")
             PlatformLink.Unsupported -> rawUrl.trim().let { if (it.startsWith("www.", true)) "https://$it" else it }
             PlatformLink.Invalid -> return@withContext EnqueueResult.Rejected("Enter a valid HTTP or HTTPS media link.")
         }
