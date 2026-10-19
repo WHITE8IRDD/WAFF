@@ -235,6 +235,25 @@ class DirectDownloadRepository(context: Context) {
         }
     }
 
+    suspend fun pause(id: Long) = withContext(Dispatchers.IO) {
+        val record = managedDao.getById(id) ?: return@withContext
+        WorkManager.getInstance(app).cancelUniqueWork("waff-merged-$id")
+        managedDao.updateProgress(id, DownloadManager.STATUS_PAUSED, record.bytesDownloaded, record.totalBytes, 0)
+    }
+
+    suspend fun resume(id: Long): Boolean = withContext(Dispatchers.IO) {
+        val record = managedDao.getById(id) ?: return@withContext false
+        if (record.status != DownloadManager.STATUS_PAUSED) return@withContext false
+        return@withContext try {
+            val request = OneTimeWorkRequestBuilder<MergedDownloadWorker>()
+                .setInputData(workDataOf(MergedDownloadWorker.KEY_TRANSFER_ID to id))
+                .build()
+            WorkManager.getInstance(app).enqueueUniqueWork("waff-merged-$id", ExistingWorkPolicy.APPEND_OR_REPLACE, request)
+            managedDao.updateProgress(id, DownloadManager.STATUS_PENDING, record.bytesDownloaded, record.totalBytes, 0)
+            true
+        } catch (_: Exception) { false }
+    }
+
     suspend fun cancel(id: Long) = withContext(Dispatchers.IO) {
         val managed = managedDao.getById(id)
         if (managed != null) {

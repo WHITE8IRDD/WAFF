@@ -51,8 +51,11 @@ internal class MergedDownloadWorker(context: Context, params: WorkerParameters) 
             dao.updateProgress(transferId, DownloadManager.STATUS_SUCCESSFUL, output.length(), output.length(), 0)
             Result.success()
         } catch (_: CancellationException) {
-            cleanupPartial(record)
-            dao.updateProgress(transferId, DownloadManager.STATUS_FAILED, record.bytesDownloaded, record.totalBytes, DownloadManager.ERROR_UNKNOWN)
+            val paused = isStopped
+            if (!paused) cleanupPartial(record)
+            dao.updateProgress(transferId,
+                if (paused) DownloadManager.STATUS_PAUSED else DownloadManager.STATUS_FAILED,
+                record.bytesDownloaded, record.totalBytes, if (paused) 0 else DownloadManager.ERROR_UNKNOWN)
             Result.failure()
         } catch (_: Exception) {
             cleanupPartial(record)

@@ -307,6 +307,11 @@ private fun TransferList(repository: DirectDownloadRepository, historyOnly: Bool
         } else LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             items(visible, key = { it.id }) { transfer ->
                 TransferRow(transfer,
+                    onPause = { scope.launch { repository.pause(transfer.id); transfers = repository.snapshots(); feedback = "Merge paused · ${transfer.filename}" } },
+                    onResume = { scope.launch {
+                        feedback = if (repository.resume(transfer.id)) "Merge resumed · ${transfer.filename}" else "Could not resume this merge. Try again."
+                        transfers = repository.snapshots()
+                    } },
                     onCancel = { scope.launch { repository.cancel(transfer.id); transfers = repository.snapshots() } },
                     onRetry = { scope.launch {
                         when (val result = repository.retry(transfer.id)) {
@@ -332,11 +337,11 @@ private fun TransferList(repository: DirectDownloadRepository, historyOnly: Bool
 }
 
 @Composable
-private fun TransferRow(transfer: TransferSnapshot, onCancel: () -> Unit, onRetry: () -> Unit, onOpen: () -> Unit, onShare: () -> Unit, onDelete: () -> Unit) {
+private fun TransferRow(transfer: TransferSnapshot, onPause: () -> Unit, onResume: () -> Unit, onCancel: () -> Unit, onRetry: () -> Unit, onOpen: () -> Unit, onShare: () -> Unit, onDelete: () -> Unit) {
     val status = when (transfer.status) {
         DownloadManager.STATUS_PENDING -> "Waiting"
         DownloadManager.STATUS_RUNNING -> "Downloading"
-        DownloadManager.STATUS_PAUSED -> "Paused by Android"
+        DownloadManager.STATUS_PAUSED -> if (transfer.localPath != null) "Paused" else "Paused by Android"
         DownloadManager.STATUS_SUCCESSFUL -> "Complete"
         DownloadManager.STATUS_FAILED -> "Failed · ${failureText(transfer.reason)}"
         else -> "Checking status"
@@ -352,13 +357,19 @@ private fun TransferRow(transfer: TransferSnapshot, onCancel: () -> Unit, onRetr
                 IconButton(onClick = onShare) { Icon(Icons.Outlined.Share, contentDescription = "Share downloaded file") }
                 IconButton(onClick = onDelete) { Icon(Icons.Outlined.DeleteOutline, contentDescription = "Delete downloaded file") }
             } else {
+                if (transfer.localPath != null && transfer.status == DownloadManager.STATUS_RUNNING) IconButton(onClick = onPause) {
+                    Icon(Icons.Outlined.Pause, contentDescription = "Pause merge")
+                }
+                if (transfer.localPath != null && transfer.status == DownloadManager.STATUS_PAUSED) IconButton(onClick = onResume) {
+                    Icon(Icons.Outlined.PlayArrow, contentDescription = "Resume merge")
+                }
                 if (transfer.status == DownloadManager.STATUS_FAILED) IconButton(onClick = onRetry) {
                     Icon(Icons.Outlined.Refresh, contentDescription = "Retry failed download")
                 }
                 IconButton(onClick = onCancel) { Icon(Icons.Outlined.Close, contentDescription = "Cancel and remove download") }
             }
         }
-        if (transfer.status == DownloadManager.STATUS_RUNNING || transfer.status == DownloadManager.STATUS_PENDING) {
+        if (transfer.status == DownloadManager.STATUS_RUNNING || transfer.status == DownloadManager.STATUS_PENDING || transfer.status == DownloadManager.STATUS_PAUSED) {
             if (transfer.totalBytes > 0) {
                 LinearProgressIndicator(progress = { transfer.bytesDownloaded.toFloat() / transfer.totalBytes }, modifier = Modifier.fillMaxWidth().padding(top = 10.dp), color = Paper, trackColor = Line)
                 Text("${formatBytes(transfer.bytesDownloaded)} of ${formatBytes(transfer.totalBytes)}", style = MaterialTheme.typography.labelSmall, color = Muted, modifier = Modifier.padding(top = 4.dp))
