@@ -5,3 +5,4 @@
 # Rhino ships optional JSR-223 / Dynalink adapters that are not present on Android.
 -dontwarn javax.script.**
 -dontwarn jdk.dynalink.**
+-dontwarn java.beans.**
