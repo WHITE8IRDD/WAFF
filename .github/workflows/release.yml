@@ -1,0 +1,74 @@
+name: Preview APK release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android SDK packages
+        shell: bash
+        run: |
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT" -type f -name sdkmanager 2>/dev/null | sort -V | tail -n 1)"
+          if [[ -z "$SDKMANAGER" ]]; then
+            echo "sdkmanager was not found under SDK root: $SDK_ROOT" >&2
+            exit 1
+          fi
+          printf 'y\n%.0s' {1..20} | "$SDKMANAGER" --licenses >/dev/null
+          "$SDKMANAGER" --install 'platforms;android-36' 'build-tools;36.0.0'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.3'
+      - name: Test and build APKs
+        run: |
+          gradle :app:testDebugUnitTest --console=plain
+          gradle :app:assembleDebug :app:assembleRelease --console=plain
+      - name: Room integration test on Android emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          script: gradle :app:connectedDebugAndroidTest --console=plain
+      - name: Prepare artifacts and checksums
+        run: |
+          mkdir -p release-assets
+          cp app/build/outputs/apk/debug/app-debug.apk release-assets/WAFF-${GITHUB_REF_NAME}-debug.apk
+          cp app/build/outputs/apk/release/app-release-unsigned.apk release-assets/WAFF-${GITHUB_REF_NAME}-release-unsigned.apk
+          (cd release-assets && sha256sum *.apk > SHA256SUMS.txt)
+      - name: Publish preview release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            existing_count="$(gh release view "$TAG" --json assets --jq '.assets | length')"
+            if [[ "$existing_count" != "0" ]]; then
+              echo "Release $TAG already has assets; refusing to overwrite them." >&2
+              exit 1
+            fi
+            gh release upload "$TAG" release-assets/*.apk release-assets/SHA256SUMS.txt
+          else
+            gh release create "$TAG" release-assets/*.apk release-assets/SHA256SUMS.txt \
+              --target "$GITHUB_SHA" \
+              --title "WAFF $TAG — early preview" \
+              --prerelease \
+              --notes "Early preview build. This is not a stable release and does not implement the full product specification. Direct HTTPS image, audio, and video files are downloaded through Android DownloadManager. Social-platform post extraction, browser detection, and several specified management features are not yet implemented. The release APK is unsigned and requires signing for standard installation; the debug APK is signed with a temporary CI debug key for evaluation."
+          fi
+          gh release view "$TAG" --json assets --jq '.assets[].name' | sort > /tmp/released-assets.txt
+          printf '%s\n' "WAFF-${TAG}-debug.apk" "WAFF-${TAG}-release-unsigned.apk" SHA256SUMS.txt | sort > /tmp/expected-assets.txt
+          diff -u /tmp/expected-assets.txt /tmp/released-assets.txt
