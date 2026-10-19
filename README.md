@@ -15,13 +15,14 @@ WAFF is an Android media-downloader project in active development. The current a
 - [ ] Platform-page extraction and format selection
 - [ ] Room-backed queue/history, user-selected storage, retry/pause controls, and verified media opening
 - [ ] Browser media detection, platform-specific media picker, and engine updates
-- [ ] Device review, release APKs, ABI validation, and release automation
+- [ ] Device review, product-wide accessibility/performance review, and stable release
+- [x] Preview APK build/release automation (unsigned release variant; debug build included for evaluation)
 
 Browser and Settings remain intentionally limited early states. URL recognition is not evidence that a platform can be extracted. The direct-file workflow requires a server that supports an HTTPS HEAD request and returns an image/audio/video MIME type; it rejects page URLs and ambiguous content rather than saving a preview or webpage as media. Transfers are managed by Android DownloadManager, so pause/resume behavior and notifications depend on Android and the device.
 
 ## Architecture
 
-The initial code keeps URL routing in a small, independently tested core model and the Compose application shell in `app`. The project will add extraction, transfer, persistence, and storage modules only alongside working, testable functionality. No ad/analytics SDKs or developer telemetry are included.
+URL routing and MIME classification are independently tested core logic; the Android transfer adapter delegates transport to DownloadManager. Persistence outside DownloadManager is still rudimentary and platform extractors are not integrated. No ad/analytics SDKs or developer telemetry are included.
 
 ## Build
 
@@ -32,11 +33,11 @@ gradle :app:testDebugUnitTest
 gradle :app:assembleDebug :app:assembleRelease
 ```
 
-The generated outputs are under `app/build/outputs/apk/`. No wrapper is included yet because the implementation environment did not have Java/Gradle available to generate and verify one. CI provisions Java and Android SDK and performs unit tests and debug/release builds. No APK or release has been built or published as part of this foundation milestone.
+The generated outputs are under `app/build/outputs/apk/`. No wrapper is included yet because the initial environment did not have Java/Gradle available to generate it. CI provisions Java and Android SDK and runs unit tests and debug/release builds. Preview releases are deliberately marked pre-release; the release APK is unsigned, while the CI debug APK uses a temporary debug key and is for evaluation only.
 
 ## Privacy and permissions
 
-The current manifest requests Internet access for future network functionality. It does not request broad storage, notification, or account permissions. No extraction or network transfer implementation is present. Future permissions and authentication capabilities will be documented before they are introduced.
+The app requests Internet access for link preflight and transfers. It does not request broad storage, notification, or account permissions; Android DownloadManager handles the direct-file destination. No cookies or authentication material are collected. Future permissions will be justified and documented before introduction.
 
 ## Licensing
 
