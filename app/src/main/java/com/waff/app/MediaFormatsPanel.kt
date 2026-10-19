@@ -12,17 +12,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import com.waff.app.platform.youtube.YouTubeFormat
-import com.waff.app.platform.youtube.YouTubeFormatKind
-import com.waff.app.platform.youtube.YouTubeMediaInfo
-import com.waff.app.platform.youtube.YouTubeSubtitle
+import com.waff.app.platform.newpipe.ExtractedFormat
+import com.waff.app.platform.newpipe.ExtractedFormatKind
+import com.waff.app.platform.newpipe.ExtractedMediaInfo
+import com.waff.app.platform.newpipe.ExtractedSubtitle
 
 @Composable
-internal fun YouTubeFormatsPanel(
-    info: YouTubeMediaInfo,
+internal fun ExtractedFormatsPanel(
+    info: ExtractedMediaInfo,
     selectedId: String?,
     onSelect: (String) -> Unit,
-    onSaveSubtitle: (YouTubeSubtitle) -> Unit,
+    onSaveSubtitle: (ExtractedSubtitle) -> Unit,
     onSaveThumbnail: () -> Unit
 ) {
     Column(Modifier.fillMaxWidth().heightIn(max = 300.dp).verticalScroll(rememberScrollState())) {
@@ -45,9 +45,9 @@ internal fun YouTubeFormatsPanel(
             }
         }
         listOf(
-            YouTubeFormatKind.VIDEO_WITH_AUDIO to "Video with audio",
-            YouTubeFormatKind.VIDEO_ONLY to "Video only · no audio",
-            YouTubeFormatKind.AUDIO to "Audio only"
+            ExtractedFormatKind.VIDEO_WITH_AUDIO to "Video with audio",
+            ExtractedFormatKind.VIDEO_ONLY to "Video only · no audio",
+            ExtractedFormatKind.AUDIO to "Audio only"
         ).forEach { (kind, title) ->
             val formats = info.formats.filter { it.kind == kind }
             if (formats.isNotEmpty()) {
@@ -55,14 +55,14 @@ internal fun YouTubeFormatsPanel(
                 formats.forEach { format -> FormatChoice(format, selectedId == format.id, onSelect) }
             }
         }
-        if (info.formats.any { it.kind == YouTubeFormatKind.VIDEO_ONLY }) {
+        if (info.formats.any { it.kind == ExtractedFormatKind.VIDEO_ONLY }) {
             Text("Video-only streams do not contain audio. WAFF does not merge streams in this preview.", color = Muted, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 6.dp))
         }
     }
 }
 
 @Composable
-private fun FormatChoice(format: YouTubeFormat, selected: Boolean, onSelect: (String) -> Unit) {
+private fun FormatChoice(format: ExtractedFormat, selected: Boolean, onSelect: (String) -> Unit) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         RadioButton(selected = selected, onClick = { onSelect(format.id) }, modifier = Modifier.semantics { contentDescription = format.label })
         Column(Modifier.weight(1f).padding(vertical = 4.dp)) {

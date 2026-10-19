@@ -36,9 +36,9 @@ import com.waff.app.core.EnqueueResult
 import com.waff.app.core.PlatformLink
 import com.waff.app.core.UrlRouter
 import com.waff.app.core.TransferSnapshot
-import com.waff.app.platform.youtube.YouTubeMediaInfo
-import com.waff.app.platform.youtube.YouTubeMetadataExtractor
-import com.waff.app.platform.youtube.YouTubeFormatPolicy
+import com.waff.app.platform.newpipe.ExtractedMediaInfo
+import com.waff.app.platform.newpipe.NewPipeMediaExtractor
+import com.waff.app.platform.newpipe.MediaFormatPolicy
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -131,15 +131,15 @@ private fun HomeScreen(
     val clipboard = LocalClipboardManager.current
     val focus = LocalFocusManager.current
     val scope = rememberCoroutineScope()
-    val youtubeExtractor = remember { YouTubeMetadataExtractor() }
-    var youtubeInfo by remember { mutableStateOf<YouTubeMediaInfo?>(null) }
+    val mediaExtractor = remember { NewPipeMediaExtractor() }
+    var mediaInfo by remember { mutableStateOf<ExtractedMediaInfo?>(null) }
     var selectedFormatId by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     Column(modifier.fillMaxSize().padding(horizontal = 24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         Spacer(Modifier.height(24.dp))
         Text("Save media.\nKeep it yours.", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Medium, lineHeight = 38.sp)
         Text("Paste a supported video link or a direct media-file URL.", style = MaterialTheme.typography.bodyMedium, color = Muted)
-        OutlinedTextField(value = link, onValueChange = { onLinkChange(it); setFeedback(null); youtubeInfo = null; selectedFormatId = null }, modifier = Modifier.fillMaxWidth(),
+        OutlinedTextField(value = link, onValueChange = { onLinkChange(it); setFeedback(null); mediaInfo = null; selectedFormatId = null }, modifier = Modifier.fillMaxWidth(),
             placeholder = { Text("Paste a direct media link", color = Muted) }, leadingIcon = { Icon(Icons.Outlined.Link, null) },
             singleLine = true, shape = RoundedCornerShape(12.dp), keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
             keyboardActions = KeyboardActions(onGo = { focus.moveFocus(FocusDirection.Down) }),
@@ -147,21 +147,33 @@ private fun HomeScreen(
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedButton(onClick = {
                 val clip = clipboard.getText()?.text
-                if (!clip.isNullOrBlank()) { onLinkChange(clip.trim()); youtubeInfo = null; selectedFormatId = null; setFeedback("Link pasted") } else setFeedback("Clipboard is empty")
+                if (!clip.isNullOrBlank()) { onLinkChange(clip.trim()); mediaInfo = null; selectedFormatId = null; setFeedback("Link pasted") } else setFeedback("Clipboard is empty")
             }, shape = RoundedCornerShape(10.dp)) {
                 Icon(Icons.Outlined.ContentPaste, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Paste")
             }
-            val youtube = (UrlRouter.parse(link) as? PlatformLink.Supported)?.takeIf { it.platform == com.waff.app.core.Platform.YOUTUBE }
+            val parsedLink = UrlRouter.parse(link)
+            val extractorUrl = when (parsedLink) {
+                is PlatformLink.Supported -> parsedLink.canonicalUrl
+                PlatformLink.Unsupported -> link.trim().let { raw ->
+                    when {
+                        raw.startsWith("www.", ignoreCase = true) -> "https://$raw"
+                        raw.startsWith("http://", ignoreCase = true) -> "https://${raw.substringAfter("://")}"
+                        else -> raw
+                    }
+                }
+                PlatformLink.Invalid -> null
+            }
+            val canExtract = extractorUrl?.let(mediaExtractor::supportsUrl) == true
             Button(onClick = {
                 focus.clearFocus()
                 busy = true
                 scope.launch {
                     try {
-                        val info = youtubeInfo
-                        if (youtube != null && info == null) {
-                            val extracted = youtubeExtractor.extract(youtube.canonicalUrl)
-                            youtubeInfo = extracted
-                            selectedFormatId = YouTubeFormatPolicy.defaultFormat(extracted)?.id
+                        val info = mediaInfo
+                        if (canExtract && info == null) {
+                            val extracted = mediaExtractor.extract(extractorUrl.orEmpty())
+                            mediaInfo = extracted
+                            selectedFormatId = MediaFormatPolicy.defaultFormat(extracted)?.id
                             setFeedback(if (extracted.formats.isEmpty()) "No downloadable formats were returned for this video." else null)
                         } else if (info != null) {
                             val format = info.formats.firstOrNull { it.id == selectedFormatId }
@@ -179,18 +191,18 @@ private fun HomeScreen(
                     } catch (_: java.io.IOException) {
                         setFeedback("Network request failed. Check your connection and try again.")
                     } catch (_: Exception) {
-                        setFeedback("YouTube could not provide media details. The video may be unavailable, restricted, or require access this extractor cannot provide.")
+                        setFeedback("The extractor could not read this media page. It may be unavailable, restricted, rate-limited, or unsupported.")
                     } finally { busy = false }
                 }
-            }, enabled = link.isNotBlank() && !busy && (youtubeInfo == null || selectedFormatId != null), shape = RoundedCornerShape(10.dp),
+            }, enabled = link.isNotBlank() && !busy && (mediaInfo == null || selectedFormatId != null), shape = RoundedCornerShape(10.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Paper, contentColor = Ink)) {
                 if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = Ink)
-                else Text(if (youtube != null && youtubeInfo == null) "Get formats" else if (youtubeInfo != null) "Download selected" else "Download", fontWeight = FontWeight.SemiBold)
+                else Text(if (canExtract && mediaInfo == null) "Get formats" else if (mediaInfo != null) "Download selected" else "Download", fontWeight = FontWeight.SemiBold)
                 if (!busy) { Spacer(Modifier.width(8.dp)); Icon(Icons.Outlined.ArrowDownward, null, Modifier.size(18.dp)) }
             }
         }
-        youtubeInfo?.let { info ->
-            YouTubeFormatsPanel(info, selectedFormatId, { selectedFormatId = it },
+        mediaInfo?.let { info ->
+            ExtractedFormatsPanel(info, selectedFormatId, { selectedFormatId = it },
                 onSaveSubtitle = { subtitle ->
                     scope.launch {
                         if (busy) return@launch
