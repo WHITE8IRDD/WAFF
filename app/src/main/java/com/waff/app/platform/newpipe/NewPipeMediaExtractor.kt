@@ -74,7 +74,10 @@ internal class NewPipeMediaExtractor {
             durationSeconds = info.duration,
             thumbnailUrl = thumbnails.maxByOrNull { it.height }?.url,
             formats = streams,
-            subtitles = info.subtitles.orEmpty().mapNotNull { it.toSubtitleOrNull() }
+            subtitles = info.subtitles.orEmpty().mapNotNull { it.toSubtitleOrNull() },
+            hashtags = Regex("#[\\p{L}\\p{N}_]{1,80}")
+                .findAll(info.description?.content.orEmpty())
+                .map { it.value.removePrefix("#") }.distinct().toList()
         )
     }
 

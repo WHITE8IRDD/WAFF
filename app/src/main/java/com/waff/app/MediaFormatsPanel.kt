@@ -73,31 +73,29 @@ internal fun ExtractedFormatsPanel(
             else "Separate tracks cannot be safely merged here. Choose a combined stream.",
             color = Muted, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 8.dp)
         )
-        listOf(
-            ExtractedFormatKind.VIDEO_WITH_AUDIO to "Video · with audio",
-            ExtractedFormatKind.VIDEO_ONLY to "Video · no audio",
-            ExtractedFormatKind.AUDIO to "Audio",
-            ExtractedFormatKind.IMAGE to "Carousel images"
-        ).forEach { (kind, title) ->
-            val formats = info.formats.filter { it.kind == kind }
-                .sortedWith(compareByDescending<ExtractedFormat> { it.height ?: 0 }
-                    .thenByDescending { it.width ?: 0 }.thenByDescending { it.bitrate ?: 0 })
-            if (formats.isNotEmpty()) {
-                Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 14.dp, bottom = 4.dp))
-                formats.forEach { format ->
-                    val selected = when (kind) {
-                        ExtractedFormatKind.VIDEO_ONLY -> selectedVideoId == format.id
-                        ExtractedFormatKind.AUDIO -> selectedAudioId == format.id
-                        else -> selectedId == format.id
-                    }
-                    val callback = when (kind) {
-                        ExtractedFormatKind.VIDEO_ONLY -> onSelectVideo
-                        ExtractedFormatKind.AUDIO -> onSelectAudio
-                        else -> onSelect
-                    }
-                    FormatChoice(format, selected, callback)
-                }
+        val videoFormats = info.formats.filter {
+            it.kind == ExtractedFormatKind.VIDEO_WITH_AUDIO || it.kind == ExtractedFormatKind.VIDEO_ONLY
+        }.sortedWith(compareByDescending<ExtractedFormat> { it.height ?: 0 }
+            .thenByDescending { it.width ?: 0 }.thenByDescending { it.bitrate ?: 0 })
+        if (videoFormats.isNotEmpty()) {
+            Text("Video quality", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 14.dp, bottom = 4.dp))
+            videoFormats.forEach { format ->
+                val videoOnly = format.kind == ExtractedFormatKind.VIDEO_ONLY
+                val detailsLabel = if (videoOnly) format.copy(label = "${format.label} · no audio") else format
+                FormatChoice(detailsLabel, if (videoOnly) selectedVideoId == format.id else selectedId == format.id,
+                    if (videoOnly) onSelectVideo else onSelect)
             }
+        }
+        val audioFormats = info.formats.filter { it.kind == ExtractedFormatKind.AUDIO }
+            .sortedByDescending { it.bitrate ?: 0 }
+        if (audioFormats.isNotEmpty()) {
+            Text("Audio", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 14.dp, bottom = 4.dp))
+            audioFormats.forEach { FormatChoice(it, selectedAudioId == it.id, onSelectAudio) }
+        }
+        val images = info.formats.filter { it.kind == ExtractedFormatKind.IMAGE }
+        if (images.isNotEmpty()) {
+            Text("Carousel images", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 14.dp, bottom = 4.dp))
+            images.forEach { FormatChoice(it, selectedId == it.id, onSelect) }
         }
         if (hasSeparatePair && mergeSupported) Button(onClick = onMerge,
             enabled = selectedVideoId != null && selectedAudioId != null,
