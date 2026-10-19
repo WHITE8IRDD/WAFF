@@ -42,7 +42,13 @@ jobs:
             exit 1
           fi
       - name: Build debug and release APKs
-        run: gradle :app:assembleDebug :app:assembleRelease
+        shell: bash
+        run: |
+          set -o pipefail
+          if ! gradle :app:assembleDebug :app:assembleRelease --stacktrace --console=plain 2>&1 | tee /tmp/waff-build.log; then
+            grep -E '(^e: |error:|What went wrong:|Execution failed|FAILURE:|Could not|Unresolved reference|R8:|Missing class|failed)' /tmp/waff-build.log | tail -n 60 | while IFS= read -r line; do echo "::error::$line"; done
+            exit 1
+          fi
       - name: Room integration test on Android emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
