@@ -38,14 +38,14 @@ internal class MergedDownloadWorker(context: Context, params: WorkerParameters) 
                 addOption("--merge-output-format", "mkv")
                 addOption("-o", outputTemplate)
             }
-            val response = YoutubeDL.getInstance().execute(request, { progress, _ ->
+            val response = YoutubeDL.getInstance().execute(request, "waff-$transferId") { progress, _, _ ->
                 val percent = progress.toInt().coerceIn(0, 99)
                 val bytes = if (record.totalBytes > 0) record.totalBytes * percent / 100 else 0L
                 kotlinx.coroutines.runBlocking {
                     dao.updateProgress(transferId, DownloadManager.STATUS_RUNNING, bytes, record.totalBytes, 0)
                     setProgress(androidx.work.workDataOf("progress" to percent))
                 }
-            }, "waff-$transferId")
+            }
             if (response.exitCode != 0) return fail(record)
             val output = File(parent, record.filename)
             if (!output.isFile || output.length() <= 0L) return fail(record)
@@ -58,11 +58,6 @@ internal class MergedDownloadWorker(context: Context, params: WorkerParameters) 
             dao.updateProgress(transferId, DownloadManager.STATUS_FAILED, record.bytesDownloaded, record.totalBytes, DownloadManager.ERROR_UNKNOWN)
             Result.failure()
         }
-    }
-
-    override fun onStopped() {
-        YoutubeDL.getInstance().destroyProcessById("waff-$transferId")
-        super.onStopped()
     }
 
     private suspend fun fail(record: ManagedTransferRecord): Result {
