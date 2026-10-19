@@ -14,7 +14,7 @@ WAFF is an Android media-downloader project in active development. The app can d
 - [x] History search, open/share actions, and confirmed removal of completed downloads
 - [x] URL, hostname, MIME, filename-safety, and filter-preserving media-selection unit tests
 - [x] Room transfer metadata implementation
-- [ ] Room DAO emulator integration test (wired into CI; current emulator verification is pending)
+- [ ] Room DAO emulator integration test (manual CI dispatch only; successful run pending)
 - [x] NewPipe-recognized service metadata and format-selection UI (experimental; CI verification pending)
 - [x] Save extracted subtitle tracks and thumbnails as separate files (experimental; CI verification pending)
 - [ ] Instagram, TikTok, and Facebook extraction; separate audio/video stream merging and full regression matrix
