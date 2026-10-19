@@ -2,3 +2,6 @@
 -keep class org.mozilla.javascript.** { *; }
 -keep class org.mozilla.classfile.ClassFileWriter { *; }
 -dontwarn org.mozilla.javascript.tools.**
+# Rhino ships optional JSR-223 / Dynalink adapters that are not present on Android.
+-dontwarn javax.script.**
+-dontwarn jdk.dynalink.**
