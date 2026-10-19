@@ -101,8 +101,10 @@ class DirectDownloadRepository(context: Context) {
     suspend fun retry(id: Long): EnqueueResult {
         val source = originalUrl(id)
             ?: return EnqueueResult.Rejected("The original link is no longer available in Android Downloads.")
-        cancel(id)
-        return enqueue(source)
+        return when (val result = enqueue(source)) {
+            is EnqueueResult.Added -> { cancel(id); result }
+            is EnqueueResult.Rejected -> result
+        }
     }
 
     fun open(id: Long, context: Context): Boolean {

@@ -91,6 +91,7 @@ private fun WaffApp(sharedText: String) {
             when (selected) {
                 "Home" -> HomeScreen(link, { link = it }, feedback, { feedback = it }, repository,
                     { selected = "Queue" }, Modifier.padding(padding))
+                "Browser" -> BrowserScreen(repository, { selected = "Queue" }, Modifier.padding(padding))
                 "Queue" -> TransferList(repository, historyOnly = false, Modifier.padding(padding))
                 "History" -> TransferList(repository, historyOnly = true, Modifier.padding(padding))
                 "Settings" -> SimpleScreen("Settings", "No configurable download preferences are available yet.", Modifier.padding(padding))

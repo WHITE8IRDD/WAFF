@@ -15,11 +15,12 @@ WAFF is an Android media-downloader project in active development. The current a
 - [x] URL, hostname, and direct-media MIME unit tests; CI workflow
 - [ ] Platform-page extraction and format selection
 - [ ] Room-backed queue/history, user-selected storage, retry/pause controls, and verified media opening
-- [ ] Browser media detection, platform-specific media picker, and engine updates
+- [x] Embedded WebView browsing with DownloadListener-based direct-file offers
+- [ ] General page-resource inspection, platform-specific media picker, and engine updates
 - [ ] Device review, product-wide accessibility/performance review, and stable release
 - [x] Preview APK build/release automation (unsigned release variant; debug build included for evaluation)
 
-Browser and Settings remain intentionally limited early states. URL recognition is not evidence that a platform can be extracted. The direct-file workflow requires a server that supports an HTTPS HEAD request and returns an image/audio/video MIME type; it rejects page URLs and ambiguous content rather than saving a preview or webpage as media. Transfers are managed by Android DownloadManager, so pause/resume behavior and notifications depend on Android and the device.
+The Browser tab uses Android WebView for ordinary browsing and offers a Download action only when WebView reports a downloadable image/audio/video MIME type. It does not inspect protected page internals or extract platform posts. The direct-file workflow requires an HTTPS server that supports HEAD and returns an image/audio/video MIME type; ambiguous responses are rejected rather than saved as media. Transfers are managed by Android DownloadManager, so pause/resume behavior and notifications depend on Android and the device.
 
 ## Architecture
 
