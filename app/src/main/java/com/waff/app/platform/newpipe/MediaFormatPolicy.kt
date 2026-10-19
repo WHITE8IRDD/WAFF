@@ -5,5 +5,4 @@ internal object MediaFormatPolicy {
     fun defaultFormat(info: ExtractedMediaInfo): ExtractedFormat? = info.formats
         .filter { it.kind == ExtractedFormatKind.VIDEO_WITH_AUDIO }
         .maxByOrNull { (it.width ?: 0).toLong() * (it.height ?: 0).toLong() }
-        ?: info.formats.firstOrNull()
 }

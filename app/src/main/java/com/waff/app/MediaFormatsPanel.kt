@@ -22,6 +22,11 @@ internal fun ExtractedFormatsPanel(
     info: ExtractedMediaInfo,
     selectedId: String?,
     onSelect: (String) -> Unit,
+    selectedVideoId: String?,
+    onSelectVideo: (String) -> Unit,
+    selectedAudioId: String?,
+    onSelectAudio: (String) -> Unit,
+    onMerge: () -> Unit,
     onSaveSubtitle: (ExtractedSubtitle) -> Unit,
     onSaveThumbnail: () -> Unit
 ) {
@@ -44,6 +49,10 @@ internal fun ExtractedFormatsPanel(
                 }
             }
         }
+        val hasSeparatePair = info.formats.any { it.kind == ExtractedFormatKind.VIDEO_ONLY } && info.formats.any { it.kind == ExtractedFormatKind.AUDIO }
+        if (hasSeparatePair) {
+            Text("Choose separate tracks to mux into one MKV file.", color = Muted, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 6.dp))
+        }
         listOf(
             ExtractedFormatKind.VIDEO_WITH_AUDIO to "Video with audio",
             ExtractedFormatKind.VIDEO_ONLY to "Video only · no audio",
@@ -52,11 +61,26 @@ internal fun ExtractedFormatsPanel(
             val formats = info.formats.filter { it.kind == kind }
             if (formats.isNotEmpty()) {
                 Text(title, style = MaterialTheme.typography.labelLarge, color = Paper, modifier = Modifier.padding(top = 8.dp, bottom = 2.dp))
-                formats.forEach { format -> FormatChoice(format, selectedId == format.id, onSelect) }
+                formats.forEach { format ->
+                    val isSelected = when (kind) {
+                        ExtractedFormatKind.VIDEO_ONLY -> selectedVideoId == format.id
+                        ExtractedFormatKind.AUDIO -> selectedAudioId == format.id
+                        else -> selectedId == format.id
+                    }
+                    val callback = when (kind) {
+                        ExtractedFormatKind.VIDEO_ONLY -> onSelectVideo
+                        ExtractedFormatKind.AUDIO -> onSelectAudio
+                        else -> onSelect
+                    }
+                    FormatChoice(format, isSelected, callback)
+                }
             }
         }
-        if (info.formats.any { it.kind == ExtractedFormatKind.VIDEO_ONLY }) {
-            Text("Video-only streams do not contain audio. WAFF does not merge streams in this preview.", color = Muted, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 6.dp))
+        if (hasSeparatePair) {
+            androidx.compose.material3.Button(onClick = onMerge, enabled = selectedVideoId != null && selectedAudioId != null,
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp), colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = Paper, contentColor = androidx.compose.ui.graphics.Color.Black)) {
+                Text("Merge selected tracks")
+            }
         }
     }
 }

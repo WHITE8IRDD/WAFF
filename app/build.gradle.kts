@@ -51,6 +51,8 @@ dependencies {
     ksp("androidx.room:room-compiler:2.7.2")
     implementation("com.github.teamnewpipe:NewPipeExtractor:0.26.5")
     implementation("io.github.junkfood02.youtubedl-android:library:0.18.1")
+    implementation("io.github.junkfood02.youtubedl-android:ffmpeg:0.18.1")
+    implementation("androidx.work:work-runtime-ktx:2.10.2")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.1.5")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")

@@ -138,6 +138,8 @@ private fun HomeScreen(
     val ytDlpExtractor = remember(context) { YtDlpMediaExtractor(context) }
     var mediaInfo by remember { mutableStateOf<ExtractedMediaInfo?>(null) }
     var selectedFormatId by remember { mutableStateOf<String?>(null) }
+    var selectedVideoFormatId by remember { mutableStateOf<String?>(null) }
+    var selectedAudioFormatId by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     val parsedLink = UrlRouter.parse(link)
     val extractorUrl = when (parsedLink) {
@@ -158,7 +160,7 @@ private fun HomeScreen(
         Spacer(Modifier.height(24.dp))
         Text("Save media.\nKeep it yours.", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Medium, lineHeight = 38.sp)
         Text("Paste a supported media page or a direct file URL.", style = MaterialTheme.typography.bodyMedium, color = Muted)
-        OutlinedTextField(value = link, onValueChange = { onLinkChange(it); setFeedback(null); mediaInfo = null; selectedFormatId = null }, modifier = Modifier.fillMaxWidth(),
+        OutlinedTextField(value = link, onValueChange = { onLinkChange(it); setFeedback(null); mediaInfo = null; selectedFormatId = null; selectedVideoFormatId = null; selectedAudioFormatId = null }, modifier = Modifier.fillMaxWidth(),
             placeholder = { Text("Paste a direct media link", color = Muted) }, leadingIcon = { Icon(Icons.Outlined.Link, null) },
             singleLine = true, shape = RoundedCornerShape(12.dp), keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
             keyboardActions = KeyboardActions(onGo = { focus.moveFocus(FocusDirection.Down) }),
@@ -184,6 +186,8 @@ private fun HomeScreen(
                                 else mediaExtractor.extract(extractorUrl.orEmpty())
                             mediaInfo = extracted
                             selectedFormatId = MediaFormatPolicy.defaultFormat(extracted)?.id
+                            selectedVideoFormatId = extracted.formats.firstOrNull { it.kind == com.waff.app.platform.newpipe.ExtractedFormatKind.VIDEO_ONLY }?.id
+                            selectedAudioFormatId = extracted.formats.firstOrNull { it.kind == com.waff.app.platform.newpipe.ExtractedFormatKind.AUDIO }?.id
                             setFeedback(if (extracted.formats.isEmpty()) "No downloadable formats were returned for this media." else null)
                         } else if (info != null) {
                             val format = info.formats.firstOrNull { it.id == selectedFormatId }
@@ -213,6 +217,22 @@ private fun HomeScreen(
         }
         mediaInfo?.let { info ->
             ExtractedFormatsPanel(info, selectedFormatId, { selectedFormatId = it },
+                selectedVideoFormatId, { selectedVideoFormatId = it },
+                selectedAudioFormatId, { selectedAudioFormatId = it },
+                onMerge = {
+                    val videoId = selectedVideoFormatId
+                    val audioId = selectedAudioFormatId
+                    if (videoId != null && audioId != null) scope.launch {
+                        if (busy) return@launch
+                        busy = true
+                        try {
+                            when (val result = repository.enqueueMerged(extractorUrl.orEmpty(), info.title, videoId, audioId)) {
+                                is EnqueueResult.Added -> { setFeedback("Merge queued · ${result.filename}"); onQueued() }
+                                is EnqueueResult.Rejected -> setFeedback(result.reason)
+                            }
+                        } finally { busy = false }
+                    }
+                },
                 onSaveSubtitle = { subtitle ->
                     scope.launch {
                         if (busy) return@launch
@@ -304,7 +324,7 @@ private fun TransferList(repository: DirectDownloadRepository, historyOnly: Bool
     pendingDelete?.let { transfer ->
         AlertDialog(onDismissRequest = { pendingDelete = null },
             title = { Text("Delete downloaded file?") },
-            text = { Text("${transfer.filename} will be removed from Downloads and WAFF history.") },
+            text = { Text("${transfer.filename} will be removed from device storage and WAFF history.") },
             confirmButton = { TextButton(onClick = { scope.launch { repository.cancel(transfer.id); pendingDelete = null; transfers = repository.snapshots() } }) { Text("Delete") } },
             dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("Keep file") } },
             containerColor = androidx.compose.ui.graphics.Color(0xFF111111), titleContentColor = Paper, textContentColor = Muted)

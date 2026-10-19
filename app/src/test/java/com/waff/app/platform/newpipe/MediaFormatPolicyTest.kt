@@ -14,10 +14,10 @@ class MediaFormatPolicyTest {
         assertEquals("large-muxed", MediaFormatPolicy.defaultFormat(info(formats))?.id)
     }
 
-    @Test fun fallsBackToFirstAvailableWhenNoMuxedStreamExists() {
-        val first = format("video-only", ExtractedFormatKind.VIDEO_ONLY, 1920, 1080)
+    @Test fun doesNotSilentlyDefaultToVideoOnlyOrAudioOnly() {
+        val videoOnly = format("video-only", ExtractedFormatKind.VIDEO_ONLY, 1920, 1080)
         val audio = format("audio", ExtractedFormatKind.AUDIO, null, null)
-        assertEquals(first, MediaFormatPolicy.defaultFormat(info(listOf(first, audio))))
+        assertNull(MediaFormatPolicy.defaultFormat(info(listOf(videoOnly, audio))))
     }
 
     @Test fun returnsNullWhenExtractorReturnsNoFormats() {

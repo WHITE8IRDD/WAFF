@@ -4,6 +4,14 @@ import android.app.DownloadManager
 import android.content.Context
 import android.content.Intent
 import android.database.Cursor
+import androidx.core.content.FileProvider
+import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
+import androidx.work.workDataOf
+import com.waff.app.platform.newpipe.MergedDownloadWorker
+import java.io.File
+import java.util.concurrent.atomic.AtomicLong
 import android.net.Uri
 import android.os.Environment
 import android.webkit.MimeTypeMap
@@ -24,7 +32,8 @@ data class TransferSnapshot(
     val status: Int,
     val bytesDownloaded: Long,
     val totalBytes: Long,
-    val reason: Int
+    val reason: Int,
+    val localPath: String? = null
 ) {
     val progressPercent: Int? get() = if (totalBytes > 0) ((bytesDownloaded * 100) / totalBytes).toInt().coerceIn(0, 100) else null
 }
@@ -33,7 +42,13 @@ data class TransferSnapshot(
 class DirectDownloadRepository(context: Context) {
     private val app = context.applicationContext
     private val manager = app.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-    private val dao = DownloadDatabase.get(app).downloadRecordDao()
+    private val database = DownloadDatabase.get(app)
+    private val dao = database.downloadRecordDao()
+    private val managedDao = database.managedTransferDao()
+
+    companion object {
+        private val managedIds = AtomicLong(-System.currentTimeMillis())
+    }
 
     suspend fun enqueue(rawUrl: String): EnqueueResult = withContext(Dispatchers.IO) {
         val parsed = UrlRouter.parse(rawUrl)
@@ -107,6 +122,38 @@ class DirectDownloadRepository(context: Context) {
         enqueueVerified(url, title, response, requestHeaders = safeHeaders)
     }
 
+    suspend fun enqueueMerged(url: String, title: String, videoFormatId: String, audioFormatId: String): EnqueueResult = withContext(Dispatchers.IO) {
+        val uri = runCatching { Uri.parse(url) }.getOrNull()
+            ?: return@withContext EnqueueResult.Rejected("The source page URL is invalid.")
+        if (uri.scheme != "https" || uri.host.isNullOrBlank() || uri.userInfo != null) {
+            return@withContext EnqueueResult.Rejected("Merged downloads require a safe HTTPS source URL.")
+        }
+        val safeFormatId = Regex("^[A-Za-z0-9._-]{1,64}$")
+        if (!safeFormatId.matches(videoFormatId) || !safeFormatId.matches(audioFormatId)) {
+            return@withContext EnqueueResult.Rejected("The selected formats cannot be safely merged by this build.")
+        }
+        val formatSelection = "$videoFormatId+$audioFormatId"
+        val filename = uniqueFilename(FileNameRules.withMimeExtension(title, "mkv"))
+        val downloads = app.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+            ?: return@withContext EnqueueResult.Rejected("Android storage is unavailable. Try again when device storage is mounted.")
+        val folder = File(downloads, "WAFF")
+        val destination = File(folder, filename)
+        val id = managedIds.getAndDecrement()
+        val record = ManagedTransferRecord(id, filename, "video/x-matroska", url, formatSelection,
+            destination.absolutePath, System.currentTimeMillis(), DownloadManager.STATUS_PENDING, 0L, 0L, 0)
+        try {
+            managedDao.insert(record)
+            val request = OneTimeWorkRequestBuilder<MergedDownloadWorker>()
+                .setInputData(workDataOf(MergedDownloadWorker.KEY_TRANSFER_ID to id))
+                .build()
+            WorkManager.getInstance(app).enqueueUniqueWork("waff-merged-$id", ExistingWorkPolicy.KEEP, request)
+            EnqueueResult.Added(id, filename, record.mimeType)
+        } catch (_: Exception) {
+            managedDao.delete(id)
+            EnqueueResult.Rejected("Android could not start the merge job. Try again.")
+        }
+    }
+
     suspend fun enqueueResolvedSubtitle(url: String, title: String, language: String, extension: String): EnqueueResult = withContext(Dispatchers.IO) {
         val uri = runCatching { Uri.parse(url) }.getOrNull()
             ?: return@withContext EnqueueResult.Rejected("The extractor returned an invalid subtitle URL.")
@@ -167,7 +214,7 @@ class DirectDownloadRepository(context: Context) {
 
     suspend fun snapshots(): List<TransferSnapshot> = withContext(Dispatchers.IO) {
         val records = dao.getAll()
-        if (records.isEmpty()) return@withContext emptyList()
+        val managed = managedDao.getAll()
         val byId = records.associateBy(DownloadRecord::id)
         val found = records.chunked(500).flatMap { batch ->
             val cursor = runCatching { manager.query(DownloadManager.Query().setFilterById(*batch.map(DownloadRecord::id).toLongArray())) }.getOrNull()
@@ -179,15 +226,37 @@ class DirectDownloadRepository(context: Context) {
         }
         val activeIds = found.mapTo(HashSet(), TransferSnapshot::id)
         records.filterNot { it.id in activeIds }.forEach { dao.delete(it.id) }
-        found.sortedByDescending { byId[it.id]?.createdAtMillis ?: 0L }
+        val managedSnapshots = managed.map { record ->
+            TransferSnapshot(record.id, record.filename, record.mimeType, record.status,
+                record.bytesDownloaded, record.totalBytes, record.reason, record.localPath)
+        }
+        (found + managedSnapshots).sortedByDescending { snapshot ->
+            byId[snapshot.id]?.createdAtMillis ?: managed.firstOrNull { it.id == snapshot.id }?.createdAtMillis ?: 0L
+        }
     }
 
     suspend fun cancel(id: Long) = withContext(Dispatchers.IO) {
-        manager.remove(id)
-        dao.delete(id)
+        val managed = managedDao.getById(id)
+        if (managed != null) {
+            WorkManager.getInstance(app).cancelUniqueWork("waff-merged-$id")
+            File(managed.localPath).delete()
+            managedDao.delete(id)
+        } else {
+            manager.remove(id)
+            dao.delete(id)
+        }
     }
 
     suspend fun retry(id: Long): EnqueueResult {
+        val managed = withContext(Dispatchers.IO) { managedDao.getById(id) }
+        if (managed != null) {
+            val formats = managed.formatSelection.split('+', limit = 2)
+            if (formats.size != 2) return EnqueueResult.Rejected("The saved format selection is invalid.")
+            return when (val result = enqueueMerged(managed.sourceUrl, managed.filename.substringBeforeLast('.'), formats[0], formats[1])) {
+                is EnqueueResult.Added -> { cancel(id); result }
+                is EnqueueResult.Rejected -> result
+            }
+        }
         val source = originalUrl(id)
             ?: return EnqueueResult.Rejected("The original link is no longer available in Android Downloads.")
         return when (val result = enqueue(source)) {
@@ -197,7 +266,10 @@ class DirectDownloadRepository(context: Context) {
     }
 
     fun open(transfer: TransferSnapshot, context: Context): Boolean {
-        val uri = manager.getUriForDownloadedFile(transfer.id) ?: return false
+        val uri = transfer.localPath?.let { path ->
+            val file = File(path)
+            if (file.isFile) runCatching { FileProvider.getUriForFile(context, "${app.packageName}.provider", file) }.getOrNull() else null
+        } ?: manager.getUriForDownloadedFile(transfer.id) ?: return false
         return runCatching {
             context.startActivity(Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(uri, transfer.mimeType)
@@ -207,7 +279,10 @@ class DirectDownloadRepository(context: Context) {
     }
 
     fun share(transfer: TransferSnapshot, context: Context): Boolean {
-        val uri = manager.getUriForDownloadedFile(transfer.id) ?: return false
+        val uri = transfer.localPath?.let { path ->
+            val file = File(path)
+            if (file.isFile) runCatching { FileProvider.getUriForFile(context, "${app.packageName}.provider", file) }.getOrNull() else null
+        } ?: manager.getUriForDownloadedFile(transfer.id) ?: return false
         return runCatching {
             val send = Intent(Intent.ACTION_SEND).apply {
                 type = transfer.mimeType
@@ -225,6 +300,7 @@ class DirectDownloadRepository(context: Context) {
 
     private suspend fun uniqueFilename(candidate: String): String {
         val existing = dao.getAll().mapTo(HashSet(), DownloadRecord::filename)
+        existing += managedDao.getAll().map(ManagedTransferRecord::filename)
         return FileNameRules.unique(candidate, existing)
     }
 
